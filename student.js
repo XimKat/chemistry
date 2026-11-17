@@ -1,7 +1,7 @@
 /* Оқушы беті: логин + құпиясөз → тесттер → тапсыру → нәтиже, менің нәтижелерім */
 (function () {
   "use strict";
-  const { sb, CFG, configured, h, rich, toast, modal, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct } = window.App;
+  const { sb, CFG, configured, h, rich, toast, modal, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct, symbolOf, childrenMap, tintMap } = window.App;
   const app = document.getElementById("app");
   const who = document.getElementById("who");
   const TOKEN_KEY = "chem_student_token";
@@ -36,7 +36,7 @@
   function renderWho() {
     who.innerHTML = "";
     if (!me) return;
-    who.appendChild(h("div", {}, h("b", {}, me.full_name), me.class_name ? " · " + me.class_name : ""));
+    who.appendChild(h("div", {}, h("b", {}, me.full_name), me.class_name ? ", " + me.class_name : ""));
     who.appendChild(h("button", { class: "ghost sm", onclick: logout }, "Шығу"));
   }
 
@@ -78,61 +78,118 @@
     if (tok) { try { await sb.rpc("student_logout", { p_token: tok }); } catch (_) {} }
   }
 
-  // ---------- басты бет: тесттер және менің нәтижелерім ----------
+  // ---------- басты бет: бөлімдер → тақырыптар → тесттер ----------
   let homeTab = "tests";
+  let curFolder = null;   // ашық бөлімнің id-і (null = барлық бөлімдер)
+  const plural = (n, word) => `${n} ${word}`;
+
   async function showHome() {
     renderWho(); loading();
-    let tests, history;
+    let tests, history, folders;
     try {
-      [tests, history] = await Promise.all([
+      [tests, history, folders] = await Promise.all([
         rpc("student_tests", { p_token: me.token }),
-        rpc("student_history", { p_token: me.token })
+        rpc("student_history", { p_token: me.token }),
+        rpc("student_folders", { p_token: me.token })
       ]);
     } catch (ex) { if (ex.message !== "NO_SESSION") showLogin(errMsg(ex)); return; }
 
-    const fresh = tests.filter(t => !t.attempt), done = tests.filter(t => t.attempt);
-    const card = t => {
-      const a = t.attempt;
-      return h("div", { class: "card stack" },
-        h("div", { class: "row between" },
-          h("span", { class: "badge " + (a ? "ok" : "") }, a ? "Тапсырылды" : "Жаңа"),
-          h("span", { class: "small muted" }, t.question_count + " сұрақ")),
-        h("h3", {}, t.title),
-        t.description ? h("p", { class: "small muted", style: { margin: 0 } }, t.description) : null,
-        a
-          ? h("div", { class: "row between" },
-              h("div", {}, h("b", { class: "mono" }, `${num(a.score)} / ${num(a.max_score)}`),
-                h("span", { class: "small muted" }, ` · ${pct(a.score, a.max_score)}%`)),
-              h("button", { class: "sm", onclick: () => showReview(a.id) }, t.show_answers ? "Дұрыс / қате" : "Нәтиже"))
-          : h("button", { class: "primary full", onclick: () => startTest(t.id) }, "Бастау"));
-    };
+    const byId = {}; folders.forEach(f => { byId[f.id] = f; });
+    const kids = childrenMap(folders), tint = tintMap(folders);
+    const testsIn = {};
+    tests.forEach(t => { const k = t.folder_id && byId[t.folder_id] ? t.folder_id : "none"; (testsIn[k] = testsIn[k] || []).push(t); });
+    // бір бөлімнің ішіндегі барлық тесттер (ұрпақтарымен)
+    const deep = id => [...(testsIn[id] || []), ...(kids[id] || []).flatMap(c => deep(c.id))];
+    if (curFolder && !byId[curFolder]) curFolder = null;
 
-    const tabBtn = (k, label) => h("button", { class: homeTab === k ? "active" : "", onclick: () => { homeTab = k; showHome(); } }, label);
-    const nav = h("nav", { class: "tabs" }, tabBtn("tests", "Тапсырмалар"), tabBtn("history", `Менің нәтижелерім (${history.length})`));
+    const seg = h("div", { class: "seg", role: "tablist" },
+      h("button", { class: homeTab === "tests" ? "active" : "", onclick: () => { homeTab = "tests"; showHome(); } }, "Тапсырмалар"),
+      h("button", { class: homeTab === "history" ? "active" : "", onclick: () => { homeTab = "history"; showHome(); } }, `Менің нәтижелерім (${history.length})`));
+    const firstName = (me.full_name || "").trim().split(/\s+/)[1] || (me.full_name || "").trim().split(/\s+/)[0] || "";
 
+    // ---- нәтижелер тарихы ----
     if (homeTab === "history") {
       const avg = history.length ? Math.round(history.reduce((s, a) => s + pct(a.score, a.max_score), 0) / history.length) : 0;
-      return setView(nav,
-        history.length ? h("div", { class: "grid", style: { gridTemplateColumns: "repeat(2, 1fr)", marginBottom: "1rem" } },
-          h("div", { class: "card" }, h("div", { class: "small muted" }, "Тапсырылған тесттер"), h("div", { class: "score-big", style: { fontSize: "1.8rem" } }, history.length)),
-          h("div", { class: "card" }, h("div", { class: "small muted" }, "Орташа нәтиже"), h("div", { class: "score-big", style: { fontSize: "1.8rem" } }, avg + "%"))) : null,
-        history.length ? h("div", { class: "stack" }, history.map(a => h("div", { class: "card row between" },
-          h("div", {},
-            h("b", {}, a.title),
-            h("div", { class: "small muted" }, fmtDate(a.submitted_at), a.archived ? " · бұрынғы әрекет" : "")),
-          h("div", { class: "row" },
-            h("span", { class: "mono" }, h("b", {}, `${num(a.score)}/${num(a.max_score)}`), ` · ${pct(a.score, a.max_score)}%`),
-            h("button", { class: "sm", onclick: () => showReview(a.id) }, "Қарау")))))
-          : h("div", { class: "notice info" }, "Сіз әлі ешбір тест тапсырмадыңыз."));
+      return setView(h("div", { class: "reading" },
+        h("h1", {}, "Менің нәтижелерім"), seg,
+        history.length ? h("div", { class: "grid", style: { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", marginBottom: "1.4rem" } },
+          h("div", { class: "card stat" }, h("div", { class: "small muted" }, "Тапсырылған тесттер"), h("div", { class: "score-big" }, history.length)),
+          h("div", { class: "card stat" }, h("div", { class: "small muted" }, "Орташа нәтиже"), h("div", { class: "score-big" }, avg + "%"))) : null,
+        history.length ? h("div", { class: "rows" }, history.map(a => h("div", { class: "test-row" },
+          h("div", { class: "t-main" },
+            h("div", { class: "t-title" }, a.title),
+            h("div", { class: "t-sub" }, fmtDate(a.submitted_at) + (a.archived ? ", бұрынғы әрекет" : ""))),
+          h("div", { class: "t-score" }, `${num(a.score)}/${num(a.max_score)}`, h("small", {}, pct(a.score, a.max_score) + "%")),
+          h("button", { class: "sm", onclick: () => showReview(a.id) }, "Талдау"))))
+          : h("div", { class: "card empty" }, "Әзірге нәтиже жоқ. «Тапсырмалар» бөлімінен тест таңдап, тапсырып көріңіз.")));
     }
 
-    setView(nav,
-      h("p", { class: "muted" }, "Әр тестті бір рет тапсырасыз. Жауаптарыңыз тапсырғанға дейін осы құрылғыда сақталып тұрады. Тапсырған тесттеріңіз «Менің нәтижелерім» бөлімінде сақталады."),
-      tests.length ? null : h("div", { class: "notice info" }, "Әзірге жарияланған тест жоқ."),
-      fresh.length ? h("h2", {}, "Жаңа тесттер") : null,
-      fresh.length ? h("div", { class: "grid" }, fresh.map(card)) : null,
-      done.length ? h("h2", {}, "Тапсырылған") : null,
-      done.length ? h("div", { class: "grid" }, done.map(card)) : null
+    const testRow = t => {
+      const a = t.attempt;
+      const info = [plural(t.question_count, "сұрақ")];
+      if (t.unlimited) info.push(t.attempts_count > 1 ? `${t.attempts_count} рет тапсырылды, соңғы нәтиже` : "қайта тапсыруға болады");
+      if (t.description) info.push(t.description);
+      return h("div", { class: "test-row" },
+        h("div", { class: "t-main" },
+          h("div", { class: "t-title" }, t.title),
+          h("div", { class: "t-sub" }, info.join(". "))),
+        a ? h("div", { class: "t-score" }, `${num(a.score)}/${num(a.max_score)}`, h("small", {}, pct(a.score, a.max_score) + "%")) : null,
+        a ? h("button", { class: "sm", onclick: () => showReview(a.id) }, t.show_answers ? "Талдау" : "Нәтиже") : null,
+        !a ? h("button", { class: "sm primary", onclick: () => startTest(t.id) }, "Бастау")
+          : t.unlimited ? h("button", { class: "sm primary", onclick: () => startTest(t.id) }, "Қайта тапсыру") : null);
+    };
+    const rows = list => h("div", { class: "rows" }, list.map(testRow));
+    const doneCount = list => list.filter(t => t.attempt).length;
+
+    // ---- бір бөлімнің ішкі беті ----
+    if (curFolder) {
+      const f = byId[curFolder];
+      const path = []; for (let x = f; x; x = x.parent_id ? byId[x.parent_id] : null) path.unshift(x);
+      const all = deep(f.id);
+      const crumbs = h("nav", { class: "crumbs", "aria-label": "Жол" },
+        h("button", { onclick: () => { curFolder = null; showHome(); } }, "Барлық бөлімдер"),
+        path.slice(0, -1).map(p => [h("span", { class: "sep" }, "/"), h("button", { onclick: () => { curFolder = p.id; showHome(); } }, p.title)]));
+
+      const blocks = [];
+      if ((testsIn[f.id] || []).length) blocks.push(rows(testsIn[f.id]));
+      (kids[f.id] || []).filter(t => deep(t.id).length).forEach(topic => {
+        const sub = [];
+        if ((testsIn[topic.id] || []).length) sub.push(rows(testsIn[topic.id]));
+        (kids[topic.id] || []).filter(st => deep(st.id).length).forEach(st => {
+          sub.push(h("div", { class: "subtopic" }, h("h3", {}, st.title), rows(deep(st.id))));
+        });
+        blocks.push(h("section", { class: "topic" },
+          h("h2", {}, topic.title),
+          h("p", { class: "small muted", style: { margin: "0 0 .7rem" } }, `${doneCount(deep(topic.id))} / ${deep(topic.id).length} тест тапсырылды`),
+          sub));
+      });
+      return setView(h("div", { class: "reading" },
+        crumbs,
+        h("div", { class: "section-head" },
+          h("div", { class: "sym-chip " + (tint[f.id] || "t0") }, symbolOf(path[0] === f ? f : f)),
+          h("div", {}, h("h1", {}, f.title),
+            h("div", { class: "muted" }, `${doneCount(all)} / ${all.length} тест тапсырылды`))),
+        all.length ? blocks : h("div", { class: "card empty" }, "Бұл бөлімде әзірге тест жоқ.")));
+    }
+
+    // ---- барлық бөлімдер ----
+    const roots = (kids.root || []).filter(f => deep(f.id).length);
+    const loose = testsIn.none || [];
+    setView(
+      h("h1", {}, firstName ? `Сәлем, ${firstName}!` : "Тапсырмалар"),
+      h("p", { class: "muted", style: { margin: "0 0 .4rem" } }, "Бөлімді таңдап, тест тапсырыңыз. Жауаптарыңыз тапсырғанға дейін осы құрылғыда сақталады."),
+      seg,
+      !tests.length ? h("div", { class: "card empty" }, "Мұғалім әлі тест жарияламаған.") : null,
+      roots.length ? h("div", { class: "tiles" }, roots.map((f, i) => {
+        const all = deep(f.id);
+        return h("button", { class: "tile " + (tint[f.id] || "t0"), onclick: () => { curFolder = f.id; showHome(); } },
+          h("span", { class: "tile-n" }, (kids.root || []).indexOf(f) + 1),
+          h("span", { class: "tile-sym" }, symbolOf(f)),
+          h("span", { class: "tile-name" }, f.title),
+          h("span", { class: "tile-meta" }, `${doneCount(all)} / ${all.length} тест`));
+      })) : null,
+      loose.length ? h("h2", {}, roots.length ? "Басқа тесттер" : "Тесттер") : null,
+      loose.length ? h("div", { class: "reading" }, rows(loose)) : null
     );
   }
 
@@ -158,7 +215,7 @@
 
     const navLinks = [];
     const bar = h("div", {});
-    const counter = h("span", { class: "small muted mono" });
+    const counter = h("span", { class: "small muted num" });
     function refresh() {
       const n = qs.filter(isAnswered).length;
       bar.style.width = (qs.length ? (n / qs.length) * 100 : 0) + "%";
@@ -174,7 +231,7 @@
       } }, String(i + 1)));
       if (q.context && q.context !== lastCtx && test.contexts && test.contexts[q.context]) {
         body.appendChild(h("div", { class: "card ctx-card" },
-          h("div", { class: "ctx-label" }, "Контекст — келесі сұрақтарға ортақ"), rich(test.contexts[q.context])));
+          h("div", { class: "ctx-label" }, "Контекст: келесі сұрақтарға ортақ мәтін"), rich(test.contexts[q.context])));
       }
       lastCtx = q.context || null;
       body.appendChild(questionCard(q, i + 1));
@@ -270,16 +327,16 @@
       }
     }
 
-    setView(
+    setView(h("div", { class: "reading" },
       h("div", { class: "test-head" },
         h("button", { class: "ghost sm", onclick: async () => {
           if (await modal(h("p", {}, "Тізімге қайтасыз ба? Жауаптарыңыз осы құрылғыда сақталады, кейін жалғастыра аласыз."),
             [{ label: "Жоқ", value: false }, { label: "Иә", value: true, class: "primary" }])) showHome();
-        } }, "← Тізімге"),
+        } }, "Артқа"),
         h("h1", {}, test.title),
         test.description ? h("p", { class: "muted" }, test.description) : null,
         h("div", { class: "qnav", "aria-label": "Сұрақтар" }, navLinks)),
-      body,
+      body),
       h("div", { class: "submitbar" }, h("div", { class: "submitbar-inner" },
         counter, h("div", { class: "progress" }, bar), submitBtn))
     );
@@ -288,19 +345,31 @@
 
   // ---------- нәтиже ----------
   function showResult(res) {
+    const det = res.details || [];
+    const full = det.filter(d => Number(d.earned) >= Number(d.points)).length;
+    const part = det.filter(d => Number(d.earned) > 0 && Number(d.earned) < Number(d.points)).length;
+    const zero = det.length - full - part;
     const head = h("div", { class: "card score-hero" },
-      h("div", { class: "muted" }, res.title || "Нәтиже"),
-      h("div", { class: "score-big" }, `${num(res.score)} / ${num(res.max_score)}`),
-      h("div", { class: "muted" }, `${pct(res.score, res.max_score)}% · ${fmtDate(res.submitted_at)}`));
-    const back = h("button", { onclick: showHome }, "← Тесттер тізіміне");
+      h("div", { class: "score-big" }, num(res.score), h("span", { class: "of" }, " / " + num(res.max_score))),
+      h("div", {},
+        h("div", { class: "score-pct" }, pct(res.score, res.max_score) + "%"),
+        h("div", { class: "muted small" }, fmtDate(res.submitted_at) + (res.archived ? ", бұрынғы әрекет" : ""))),
+      det.length ? h("div", { class: "row", style: { marginLeft: "auto" } },
+        h("span", { class: "badge ok" }, `Дұрыс: ${full}`),
+        part ? h("span", { class: "badge warn" }, `Жартылай: ${part}`) : null,
+        h("span", { class: "badge bad" }, `Қате: ${zero}`)) : null);
+    const back = () => h("button", { class: "ghost sm", onclick: showHome }, "Тапсырмаларға оралу");
+    const again = () => res.can_retake ? h("button", { class: "primary sm", onclick: () => startTest(res.test_id) }, "Қайта тапсыру") : null;
+    const top = h("div", { class: "test-head" }, h("div", { class: "row between" }, back(), again()), h("h1", { style: { marginTop: ".6rem" } }, res.title || "Нәтиже"));
     if (!res.show_answers || !res.questions) {
-      return setView(back, h("div", { style: { height: "1rem" } }), head,
-        h("p", { class: "muted", style: { textAlign: "center" } }, "Мұғалім бұл тест бойынша дұрыс жауаптарды жасырған."));
+      return setView(h("div", { class: "reading" }, top, head,
+        h("p", { class: "muted" }, "Мұғалім бұл тест бойынша дұрыс жауаптарды жасырған."),
+        h("div", { class: "row" }, again())));
     }
-    setView(back, h("div", { style: { height: "1rem" } }), head,
-      h("h2", {}, "Жауаптарды талдау"),
+    setView(h("div", { class: "reading" }, top, head,
+      h("h2", {}, "Әр сұрақ бойынша"),
       renderReview(res),
-      h("div", { style: { marginTop: "1.2rem" } }, h("button", { onclick: showHome }, "← Тесттер тізіміне")));
+      h("div", { class: "row", style: { marginTop: "1.4rem" } }, back(), again())));
   }
 
   async function showReview(attemptId) {
@@ -313,7 +382,7 @@
   (async function init() {
     if (!configured || !sb) {
       setView(h("div", { class: "narrow notice err" },
-        "Сайт әлі бапталмаған: assets/config.js файлына Supabase деректерін енгізіңіз."));
+        "Сайт әлі бапталмаған: config.js файлына Supabase деректерін енгізіңіз."));
       return;
     }
     const tok = localStorage.getItem(TOKEN_KEY);

@@ -101,7 +101,8 @@
       back.addEventListener("click", e => { if (e.target === back) close(null); });
       document.addEventListener("keydown", onKey);
       document.body.appendChild(back);
-      const p = box.querySelector("button.primary"); if (p) p.focus();
+      const f = box.querySelector("input:not([type=checkbox]):not([type=radio]), textarea, select") || box.querySelector("button.primary");
+      if (f) f.focus();
     });
   }
   const confirmBox = (text, okLabel, danger) => modal(h("p", {}, text), [
@@ -177,7 +178,7 @@
             h("div", {}, h("b", { class: "q-num" }, L.k + ")"), rich(L.h)),
             h("div", { class: "small" },
               h("span", { class: ok ? "mt-ok" : "mt-bad" }, "Сіздікі: " + mine),
-              ok ? null : h("span", { class: "mt-ok" }, "  ·  Дұрысы: " + (correct[L.k] || "?")))));
+              ok ? null : h("span", { class: "mt-ok" }, ", дұрысы: " + (correct[L.k] || "?")))));
         }
         card.appendChild(list);
         card.appendChild(h("div", { class: "opts match-opts" }, (q.options || []).map(o =>
@@ -205,9 +206,33 @@
     return frag;
   }
 
+  // Бөлім белгісі: «Бейорганикалық химия» → «Бх», «Электролиз» → «Эл»
+  function symbolOf(f) {
+    if (f && f.symbol && f.symbol.trim()) return f.symbol.trim().slice(0, 3);
+    const w = String((f && f.title) || "").replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
+    if (!w.length) return "?";
+    const a = w[0][0].toUpperCase();
+    const b = w.length > 1 ? w[1][0].toLowerCase() : (w[0][1] || "").toLowerCase();
+    return a + b;
+  }
+  // Ағаш: parent_id → балалар тізімі
+  function childrenMap(folders) {
+    const m = {};
+    (folders || []).forEach(f => { const k = f.parent_id || "root"; (m[k] = m[k] || []).push(f); });
+    Object.values(m).forEach(l => l.sort((a, b) => (a.position - b.position) || String(a.created_at || "").localeCompare(String(b.created_at || ""))));
+    return m;
+  }
+  // Әр бөлімнің түсі (түбірдегі ретіне қарай), балалары сол түсті алады
+  function tintMap(folders) {
+    const kids = childrenMap(folders), tint = {};
+    const walk = (id, t) => { tint[id] = t; (kids[id] || []).forEach(c => walk(c.id, t)); };
+    (kids.root || []).forEach((f, i) => walk(f.id, "t" + (i % 6)));
+    return tint;
+  }
+
   window.App = {
     CFG, sb, configured, TYPE_LABEL, errMsg, esc, clean, h, rich, toast, modal, confirmBox,
-    chemifyNode, chemifyText, fmtDate, num, pct, renderReview,
+    chemifyNode, chemifyText, fmtDate, num, pct, renderReview, symbolOf, childrenMap, tintMap,
     LETTERS: "ABCDEFGH".split("")
   };
 })();
