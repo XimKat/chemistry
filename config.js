@@ -4,7 +4,7 @@
 // =====================================================================
 window.APP_CONFIG = {
   // Project URL, мысалы: "https://abcdefghijkl.supabase.co"
-  SUPABASE_URL: "https://wavjlongkqmexluifxbp.supabase.co/rest/v1/",
+  SUPABASE_URL: "https://wavjlongkqmexluifxbp.supabase.co",
 
   // Publishable key (sb_publishable_...) немесе anon public key
   // Бұл кілт ашық болуы қалыпты жағдай — деректерді қауіпсіздік ережелері қорғайды.
