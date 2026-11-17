@@ -508,7 +508,7 @@
         h("p", { class: "small muted", style: { margin: 0 } }, "Сұрақтарды үлгі бойынша Word-та жазып, файлды жүктеңіз. Формулалардағы индекстер (H₂SO₄), суреттер мен кестелер сақталады."),
         h("div", { class: "row" },
           h("button", { class: "primary", onclick: () => wordIn.click() }, "📄 Word (.docx) жүктеу"),
-          h("a", { class: "btn", href: "templates/suraqtar-ulgisi.docx", download: "" }, "⬇ Үлгі файлды жүктеп алу"),
+          h("a", { class: "btn", href: "suraqtar-ulgisi.docx", download: "" }, "⬇ Үлгі файлды жүктеп алу"),
           wordIn)),
       ctxBox,
       h("h2", {}, "Сұрақтар"),
