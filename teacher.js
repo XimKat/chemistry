@@ -180,6 +180,10 @@
       node("none", "Бөлімсіз тесттер", loose.length, 0, null));
 
     // ---- таңдалған бөлімнің тесттері ----
+    const order = {}; flatTree(folders).forEach(({ f }, i) => { order[f.id] = i; });
+    const byTree = (a, b) => ((order[a.folder_id] ?? 1e9) - (order[b.folder_id] ?? 1e9)) || (a.position - b.position) ||
+      String(a.created_at).localeCompare(String(b.created_at));
+    tests.sort(byTree);
     let shown, heading, sub = "";
     if (selFolder === "all") { shown = tests; heading = "Барлық тесттер"; }
     else if (selFolder === "none") { shown = loose; heading = "Бөлімсіз тесттер"; }

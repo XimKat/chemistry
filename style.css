@@ -349,3 +349,4 @@ table.list tr:last-child td { border-bottom: none; }
 .tree-node:hover .tn-tools, .tree-node:focus-within .tn-tools { display: flex; }
 .tree-node .tn-label span:nth-child(2), .tree-node .tn-label > span:first-child:not(.tree-sym) { overflow: hidden; text-overflow: ellipsis; }
 div.field { display: block; font-size: .92rem; color: var(--muted); }
+.tree-node .tn-count { flex: 0 0 auto; }
