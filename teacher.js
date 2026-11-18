@@ -303,8 +303,8 @@
   // =====================================================================
   const TASK_FORMAT = {
     whoami: {
-      ph: "Күкірт қышқылы — H2SO4\nАс тұзы — NaCl\nСөндірілген әк — Ca(OH)2\n\nМетан — CH4\nЭтанол — C2H5OH",
-      help: "Әр жолға бір жұп: атауы, сызықша (—), формуласы. Бос жол қалдырсаңыз, жаңа топ басталады (әр топ бөлек сәйкестендіріледі). Ұпай: әр дұрыс жұпқа 1."
+      ph: "## Қышқылдар мен тұздар\nКүкірт қышқылы — H2SO4\nАс тұзы — NaCl\nСөндірілген әк — Ca(OH)2\n\n## Органикалық заттар\nМетан — CH4\nЭтанол — C2H5OH",
+      help: "Әр жолға бір жұп: атауы, сызықша (—), формуласы. Бос жол қалдырсаңыз, жаңа топ басталады (әр топ бөлек сәйкестендіріледі). Топқа атау беру үшін оның алдына ## белгісімен жол жазыңыз. Ұпай: әр дұрыс жұпқа 1."
     },
     balance: {
       ph: "2H2 + O2 = 2H2O\n4Al + 3O2 = 2Al2O3\nFe2O3 + 3CO → 2Fe + 3CO2",
@@ -340,16 +340,18 @@
     const lines = String(text || "").split(/\r?\n/);
     const out = { questions: [], items: [] };
     if (type === "whoami") {
-      const groups = []; let cur = [];
+      const groups = []; let cur = []; let title = "";
+      const close = () => { if (cur.length) { cur.title = title; groups.push(cur); } cur = []; title = ""; };
       lines.forEach(l => {
         const t = l.trim();
-        if (!t) { if (cur.length) groups.push(cur); cur = []; return; }
+        if (!t) { close(); return; }
+        if (t.startsWith("##")) { close(); title = t.replace(/^#+\s*/, ""); return; }
         if (t.startsWith("#")) return;
         const m = t.match(/^(.+?)(?:\t|\s+[—–-]\s+|\s*=\s*|\s*;\s*)(.+)$/);
         if (!m) { out.items.push({ ok: false, html: esc(t), msg: "сызықшасы (—) табылмады" }); return; }
         cur.push({ name: m[1].trim(), f: m[2].trim() });
       });
-      if (cur.length) groups.push(cur);
+      close();
       groups.forEach((g, gi) => {
         const rnd = seeded(g.map(x => x.name + "|" + x.f).join("\n"));
         const order = g.map((_, i) => i);
@@ -358,10 +360,11 @@
         const options = order.map((src, pos) => ({ k: KEYS[pos] || ("K" + pos), h: g[src].f }));
         const left = g.map((x, i) => ({ k: String(i + 1), h: esc(x.name) }));
         const answer = {}; g.forEach((_, i) => { answer[String(i + 1)] = keyOf[i]; });
-        out.questions.push({ id: "w" + (gi + 1), type: "whoami", stem: "", left, options, answer, points: g.length });
+        out.questions.push({ id: "w" + (gi + 1), type: "whoami", stem: g.title ? `<p><b>${esc(g.title)}</b></p>` : "", left, options, answer, points: g.length });
+        if (g.title) out.items.push({ ok: true, head: true, html: `<b>${esc(g.title)}</b>` });
         g.forEach(x => out.items.push({ ok: true, html: `${esc(x.name)} — ${chemifyText(x.f)}`, group: gi + 1 }));
       });
-      if (groups.length > 1) out.items.forEach(it => { if (it.group) it.html = `<span class="muted">${it.group}-топ.</span> ` + it.html; });
+      if (groups.length > 1 && !groups.some(g => g.title)) out.items.forEach(it => { if (it.group) it.html = `<span class="muted">${it.group}-топ.</span> ` + it.html; });
     } else if (type === "balance") {
       lines.forEach((l, i) => {
         const t = l.trim(); if (!t || t.startsWith("#")) return;
@@ -389,6 +392,8 @@
     }
     return out;
   }
+
+  window.TaskParse = parseTask;
 
   async function showTaskEditor(doc, attemptsCount) {
     const type = doc.content.task_type;
@@ -431,13 +436,13 @@
       parsed = parseTask(type, area.value);
       const pts = parsed.questions.reduce((a, q) => a + q.points, 0);
       const bad = parsed.items.filter(i => !i.ok && !i.soft).length, soft = parsed.items.filter(i => i.soft).length;
-      summary.textContent = `${parsed.items.filter(i => i.ok || i.soft).length} элемент, ${pts} ұпай`;
+      summary.textContent = `${parsed.items.filter(i => (i.ok || i.soft) && !i.head).length} элемент, ${pts} ұпай`;
       preview.innerHTML = "";
       if (!parsed.items.length) { preview.appendChild(h("p", { class: "small muted" }, "Мәтін жазылған сайын мұнда оқушыға қалай көрінетіні шығады.")); return; }
       if (bad || soft) preview.appendChild(h("div", { class: "notice", style: { marginBottom: ".6rem" } },
         bad ? `${bad} жол танылмады — олар сақталмайды. ` : "", soft ? `${soft} реакцияда атомдар саны тең емес — тексеріңіз.` : ""));
       preview.appendChild(h("ol", { class: "task-preview" }, parsed.items.map(it =>
-        h("li", { class: it.ok ? "" : "bad" }, h("span", { html: it.html }), it.msg ? h("span", { class: "small " + (it.soft ? "mt-bad" : "mt-bad") }, "  " + it.msg) : null))));
+        h("li", { class: (it.ok ? "" : "bad") + (it.head ? " head" : "") }, h("span", { html: it.html }), it.msg ? h("span", { class: "small " + (it.soft ? "mt-bad" : "mt-bad") }, "  " + it.msg) : null))));
     };
     area.addEventListener("input", () => { dirty = true; paint(); });
     paint();

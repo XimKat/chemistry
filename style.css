@@ -378,3 +378,4 @@ input.complete-in { flex: 1 1 220px; min-width: 180px; width: auto; font-size: 1
 select.who-sel { width: auto; min-width: 150px; max-width: 46vw; }
 .who-row { grid-template-columns: 1fr auto; }
 @media (max-width: 760px) { .task-split { grid-template-columns: 1fr; } }
+.task-preview li.head { list-style: none; margin: .6rem 0 0 -1.4rem; }
