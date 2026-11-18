@@ -60,7 +60,7 @@
   let appealCount = 0;
   let editorReturn = null;   // өңдеуден кейін қай қойындыға оралу керек
   function tabs() {
-    const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["appeals", "Апелляциялар"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
+    const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["appeals", "Апелляциялар"], ["students", "Оқушылар"], ["results", "Нәтижелер"], ["messages", "Хабарламалар"]];
     return h("nav", { class: "tabs no-print" }, items.map(([k, label]) =>
       h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; editorReturn = null; if (k === "tasks") taskType = null; route(); } }, label,
         k === "appeals" ? h("span", { class: "count appeal-count" + (appealCount ? "" : " hidden") }, String(appealCount)) : null)));
@@ -78,6 +78,58 @@
     if (tab === "tasks") return taskType ? showTests("tasks:" + taskType) : showTaskTypes();
     if (tab === "students") return showStudents();
     if (tab === "results") return showResults(arg);
+    if (tab === "messages") return showMessages();
+  }
+
+  // =====================================================================
+  //  ХАБАРЛАМАЛАР (оқушылардың 🔔 белгісінде көрінеді)
+  // =====================================================================
+  async function showMessages() {
+    loading();
+    let students = [], sent = [];
+    try {
+      [students, sent] = await Promise.all([
+        sb.from("students").select("id,full_name,class_name").order("class_name").order("full_name").then(must),
+        sb.from("notifications").select("id,body,classes,student_id,created_at").eq("kind", "message").order("created_at", { ascending: false }).limit(100).then(must)
+      ]);
+    } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
+    const byId = {}; students.forEach(s => { byId[s.id] = s; });
+    const classes = [...new Set(students.map(s => (s.class_name || "").trim()).filter(Boolean))].sort();
+    const to = h("select", {},
+      h("option", { value: "all" }, "Барлық оқушылар"),
+      classes.length ? h("optgroup", { label: "Сынып" }, classes.map(c => h("option", { value: "c:" + c }, c + " сынып"))) : null,
+      students.length ? h("optgroup", { label: "Бір оқушы" }, students.map(s => h("option", { value: "s:" + s.id }, s.full_name + (s.class_name ? ` (${s.class_name})` : "")))) : null);
+    const text = h("textarea", { rows: 4, maxlength: 1000, placeholder: "Мысалы: Жұмаға дейін «Теңестір» тапсырмаларын орындап қойыңыздар." });
+    const btn = h("button", { class: "primary", onclick: async () => {
+      const body = text.value.trim();
+      if (!body) { toast("Хабарлама мәтінін жазыңыз"); text.focus(); return; }
+      const row = { kind: "message", title: "Мұғалімнен хабарлама", body };
+      if (to.value.startsWith("c:")) row.classes = [to.value.slice(2)];
+      else if (to.value.startsWith("s:")) row.student_id = to.value.slice(2);
+      btn.disabled = true;
+      try { must(await sb.from("notifications").insert(row)); toast("Хабарлама жіберілді"); showMessages(); }
+      catch (ex) { toast(errMsg(ex), 5000); btn.disabled = false; }
+    } }, "Жіберу");
+    const whom = m => m.student_id ? ((byId[m.student_id] || {}).full_name || "Оқушы") : (m.classes && m.classes.length ? m.classes.join(", ") + " сынып" : "Барлық оқушылар");
+    setView(tabs(),
+      h("div", { class: "reading" },
+        h("h1", {}, "Хабарламалар"),
+        h("p", { class: "muted" }, "Жазған хабарламаңыз оқушылардың бетінде 🔔 белгісінде көрінеді. Жаңа тест жарияланғанда немесе тестті қайта ашқанда оқушыларға хабарлама өздігінен барады."),
+        h("div", { class: "card stack" },
+          h("label", { class: "field" }, "Кімге", to),
+          h("label", { class: "field" }, "Хабарлама", text),
+          h("div", { class: "row" }, btn)),
+        h("h2", {}, "Жіберілген хабарламалар"),
+        sent.length ? h("div", { class: "rows" }, sent.map(m => h("div", { class: "test-row" },
+          h("div", { class: "t-main" },
+            h("div", { class: "t-title", style: { whiteSpace: "pre-line", fontWeight: 400 } }, m.body),
+            h("div", { class: "t-sub" }, fmtDate(m.created_at) + " · " + whom(m))),
+          h("button", { class: "ghost sm danger", onclick: async () => {
+            if (!(await confirmBox("Хабарламаны өшіресіз бе? Оқушылар оны енді көрмейді.", "Өшіру", true))) return;
+            try { must(await sb.from("notifications").delete().eq("id", m.id)); toast("Өшірілді"); showMessages(); }
+            catch (ex) { toast(errMsg(ex), 5000); }
+          } }, "Өшіру"))))
+          : h("div", { class: "card empty" }, "Әзірге хабарлама жіберілмеген.")));
   }
 
   // =====================================================================

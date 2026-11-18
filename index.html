@@ -2,26 +2,24 @@
 <html lang="kk">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Химия · ҰБТ-ға дайындық</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='3' fill='white' stroke='%2318211d' stroke-width='2'/%3E%3Ctext x='16' y='22' font-size='13' text-anchor='middle' fill='%2318211d' font-family='Georgia,serif' font-weight='700'%3E%D0%A5%D0%BC%3C/text%3E%3C/svg%3E">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>XimKAT Chemistry · ҰБТ-ға дайындық</title>
+  <meta name="theme-color" content="#1F6BEA">
+  <link rel="icon" type="image/png" href="img/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans:ital,wght@0,400;0,700;1,400&family=PT+Serif:wght@400;700&display=swap&subset=cyrillic-ext">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Caveat:wght@700&display=swap">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="student.css">
 </head>
-<body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">Хм</span><span id="siteTitle">Химия · ҰБТ-ға дайындық</span></div>
-      <div class="spacer"></div>
-      <div class="who" id="who"></div>
-    </div>
-  </header>
+<body class="st">
+  <header class="xk-top" id="top"></header>
 
   <main class="wrap" id="app">
-    <div class="narrow"><span class="spinner"></span></div>
+    <div class="narrow" style="text-align:center"><span class="spinner"></span></div>
   </main>
+
+  <nav class="xk-tabbar" id="tabbar" aria-label="Негізгі мәзір"></nav>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
