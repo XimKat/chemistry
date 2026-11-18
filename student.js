@@ -82,6 +82,7 @@
   // ---------- басты бет: бөлімдер → тақырыптар → тесттер ----------
   let homeTab = "tests";
   let curFolder = null;   // ашық бөлімнің id-і (null = барлық бөлімдер)
+  let taskType = null;    // Тапсырмалар қойындысында таңдалған түр (null = түрлер тізімі)
   const plural = (n, word) => `${n} ${word}`;
 
   async function showHome() {
@@ -99,8 +100,9 @@
     const isTasks = homeTab === "tasks";
     const unit = isTasks ? "тапсырма" : "тест";
     const allItems = tests;
-    tests = allItems.filter(t => (t.kind || "test") === (isTasks ? "task" : "test"));
-    folders = folders.filter(f => (f.scope || "tests") === (isTasks ? "tasks" : "tests"));
+    const allTasks = allItems.filter(t => t.kind === "task");
+    tests = isTasks ? allTasks.filter(t => t.task_type === taskType) : allItems.filter(t => (t.kind || "test") === "test");
+    folders = folders.filter(f => (f.scope || "tests") === (isTasks ? "tasks:" + taskType : "tests"));
     const byId = {}; folders.forEach(f => { byId[f.id] = f; });
     const kids = childrenMap(folders), tint = tintMap(folders);
     const testsIn = {};
@@ -109,7 +111,7 @@
     const deep = id => [...(testsIn[id] || []), ...(kids[id] || []).flatMap(c => deep(c.id))];
     if (curFolder && !byId[curFolder]) curFolder = null;
 
-    const tab = (k, label) => h("button", { class: homeTab === k ? "active" : "", onclick: () => { if (homeTab !== k) curFolder = null; homeTab = k; showHome(); } }, label);
+    const tab = (k, label) => h("button", { class: homeTab === k ? "active" : "", onclick: () => { if (homeTab !== k || k === "tasks") { curFolder = null; taskType = null; } homeTab = k; showHome(); } }, label);
     const seg = h("div", { class: "seg", role: "tablist" },
       tab("tests", "Тесттер"), tab("tasks", "Тапсырмалар"),
       tab("history", `Менің нәтижелерім (${history.length})`));
@@ -157,7 +159,8 @@
       const path = []; for (let x = f; x; x = x.parent_id ? byId[x.parent_id] : null) path.unshift(x);
       const all = deep(f.id);
       const crumbs = h("nav", { class: "crumbs", "aria-label": "Жол" },
-        h("button", { onclick: () => { curFolder = null; showHome(); } }, "Барлық бөлімдер"),
+        isTasks ? [h("button", { onclick: () => { curFolder = null; taskType = null; showHome(); } }, "Тапсырма түрлері"), h("span", { class: "sep" }, "/")] : null,
+        h("button", { onclick: () => { curFolder = null; showHome(); } }, isTasks ? TASK_TYPES[taskType].title : "Барлық бөлімдер"),
         path.slice(0, -1).map(p => [h("span", { class: "sep" }, "/"), h("button", { onclick: () => { curFolder = p.id; showHome(); } }, p.title)]));
 
       const blocks = [];
@@ -182,13 +185,31 @@
         all.length ? blocks : h("div", { class: "card empty" }, `Бұл бөлімде әзірге ${unit} жоқ.`)));
     }
 
+    // ---- тапсырмалар: алдымен түрін таңдау ----
+    if (isTasks && !taskType) {
+      return setView(
+        h("h1", {}, firstName ? `Сәлем, ${firstName}!` : "Тапсырмалар"),
+        h("p", { class: "muted", style: { margin: "0 0 .4rem" } }, "Тапсырма түрін таңдаңыз."),
+        seg,
+        h("div", { class: "type-grid" }, Object.entries(TASK_TYPES).map(([k, v]) => {
+          const list = allTasks.filter(t => t.task_type === k);
+          return h("button", { class: "type-card big", disabled: !list.length, onclick: () => { taskType = k; curFolder = null; showHome(); } },
+            h("b", {}, v.title),
+            h("span", { class: "small muted" }, v.hint),
+            h("span", { class: "type-meta" }, list.length ? `${doneCount(list)} / ${list.length} тапсырма орындалды` : "Әзірге тапсырма жоқ"));
+        })));
+    }
+
     // ---- барлық бөлімдер ----
     const roots = (kids.root || []).filter(f => deep(f.id).length);
     const loose = testsIn.none || [];
     setView(
-      h("h1", {}, firstName ? `Сәлем, ${firstName}!` : "Тапсырмалар"),
+      isTasks ? h("nav", { class: "crumbs", "aria-label": "Жол" },
+        h("button", { onclick: () => { taskType = null; showHome(); } }, "Тапсырма түрлері"),
+        h("span", { class: "sep" }, "/"), h("span", {}, TASK_TYPES[taskType].title)) : null,
+      h("h1", {}, isTasks ? TASK_TYPES[taskType].title : firstName ? `Сәлем, ${firstName}!` : "Тапсырмалар"),
       h("p", { class: "muted", style: { margin: "0 0 .4rem" } }, isTasks
-        ? "«Мен кіммін?», «Теңестір», «Мені аяқта» тапсырмалары. Бөлімді таңдап, орындаңыз."
+        ? TASK_TYPES[taskType].hint + " Бөлімді таңдап, орындаңыз."
         : "Бөлімді таңдап, тест тапсырыңыз. Жауаптарыңыз тапсырғанға дейін осы құрылғыда сақталады."),
       seg,
       !tests.length ? h("div", { class: "card empty" }, isTasks ? "Мұғалім әлі тапсырма жарияламаған." : "Мұғалім әлі тест жарияламаған.") : null,

@@ -8,6 +8,7 @@
   const who = document.getElementById("who");
   let user = null;
   let tab = "tests";
+  let taskType = null;   // Тапсырмалар қойындысында ашық тұрған түр (null = түрлер тізімі)
 
   const uid = p => p + Math.random().toString(36).slice(2, 9);
   const setView = (...nodes) => { app.innerHTML = ""; nodes.flat().forEach(n => n && app.appendChild(n)); };
@@ -59,11 +60,11 @@
   function tabs() {
     const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
     return h("nav", { class: "tabs no-print" }, items.map(([k, label]) =>
-      h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; route(); } }, label)));
+      h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; if (k === "tasks") taskType = null; route(); } }, label)));
   }
   function route(arg) {
     if (tab === "tests") return showTests("tests");
-    if (tab === "tasks") return showTests("tasks");
+    if (tab === "tasks") return taskType ? showTests("tasks:" + taskType) : showTaskTypes();
     if (tab === "students") return showStudents();
     if (tab === "results") return showResults(arg);
   }
@@ -73,7 +74,7 @@
   // =====================================================================
   const LEVEL = ["Бөлім", "Тақырып", "Тақырыпша"];
   const LEVEL_NEW = ["Жаңа бөлім", "Жаңа тақырып", "Жаңа тақырыпша"];
-  const SEL = { tests: "all", tasks: "all" };   // "all" | "none" | бөлім id-і
+  const SEL = { tests: "all" };   // "all" | "none" | бөлім id-і
   const OPEN_KEY = "chem_tree_open";
   let openSet;
   try { openSet = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); } catch (_) { openSet = new Set(); }
@@ -116,10 +117,36 @@
     return { title: t.value.trim(), symbol: sym.value.trim() };
   }
 
+  // Тапсырмалар қойындысының бірінші беті: тапсырма түрлері
+  async function showTaskTypes() {
+    loading();
+    let tasks;
+    try { tasks = must(await sb.from("tests").select("id,kind,published,content").eq("kind", "task")); }
+    catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
+    const cnt = {};
+    tasks.forEach(t => {
+      const k = (t.content || {}).task_type; const c = cnt[k] = cnt[k] || { all: 0, pub: 0 };
+      c.all++; if (t.published) c.pub++;
+    });
+    setView(tabs(),
+      h("h1", {}, "Тапсырмалар"),
+      h("p", { class: "muted", style: { margin: "0 0 1rem" } }, "Тапсырма түрін таңдаңыз. Әр түрдің өз бөлімдері мен тақырыптары бар."),
+      h("div", { class: "type-grid" }, Object.entries(TASK_TYPES).map(([k, v]) => {
+        const c = cnt[k] || { all: 0, pub: 0 };
+        return h("button", { class: "type-card big", onclick: () => { taskType = k; route(); } },
+          h("b", {}, v.title),
+          h("span", { class: "small muted" }, v.hint),
+          h("span", { class: "type-meta" }, c.all ? `${c.all} тапсырма, жарияланғаны ${c.pub}` : "Әзірге тапсырма жоқ"));
+      })));
+  }
+
   async function showTests(scope) {
     scope = scope || "tests";
-    const W = WORDS[scope];
+    const base = scope.startsWith("tasks") ? "tasks" : "tests";
+    const ttype = base === "tasks" ? scope.split(":")[1] : null;
+    const W = WORDS[base];
     const reload = () => showTests(scope);
+    if (!(scope in SEL)) SEL[scope] = "all";
     let selFolder = SEL[scope];
     const setSel = v => { SEL[scope] = v; };
     loading();
@@ -129,7 +156,9 @@
         sb.from("tests").select("id,title,description,content,published,show_answers,created_at,folder_id,position,max_attempts,classes,kind").order("position").order("created_at").then(must),
         loadFolders(scope)
       ]);
-      tests = tests.filter(t => (t.kind || "test") === (scope === "tasks" ? "task" : "test"));
+      tests = tests.filter(t => base === "tasks"
+        ? t.kind === "task" && (t.content || {}).task_type === ttype
+        : (t.kind || "test") === "test");
       must(await sb.from("attempts").select("test_id")).forEach(a => { counts[a.test_id] = (counts[a.test_id] || 0) + 1; });
     } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
 
@@ -208,7 +237,7 @@
       h("div", { class: "tree-sep" }),
       branch("root", 0),
       folders.length ? h("div", { class: "tree-sep" }) : h("p", { class: "small muted", style: { margin: ".4rem .3rem" } },
-        `Бөлім → тақырып → тақырыпша құрып, ${scope === "tasks" ? "тапсырмаларды" : "тесттерді"} соларға орналастырыңыз.`),
+        `Бөлім → тақырып → тақырыпша құрып, ${base === "tasks" ? "тапсырмаларды" : "тесттерді"} соларға орналастырыңыз.`),
       node("none", W.none, loose.length, 0, null));
 
     // ---- таңдалған бөлімнің тесттері ----
@@ -263,9 +292,9 @@
       const where = t.folder_id && byId[t.folder_id] ? folderPath(folders, t.folder_id) : "Бөлімсіз";
       return h("div", { class: "test-row admin" },
         h("div", { class: "t-main" },
-          h("div", { class: "t-title" }, t.title || (scope === "tasks" ? "Атаусыз тапсырма" : "Атаусыз тест")),
-          h("div", { class: "t-sub" }, scope === "tasks"
-            ? `${where}. ${(TASK_TYPES[(t.content || {}).task_type] || {}).title || "Тапсырма"}, ${num(total)} ұпай, орындағандар: ${counts[t.id] || 0}`
+          h("div", { class: "t-title" }, t.title || (base === "tasks" ? "Атаусыз тапсырма" : "Атаусыз тест")),
+          h("div", { class: "t-sub" }, base === "tasks"
+            ? `${where}. ${num(total)} ұпай, орындағандар: ${counts[t.id] || 0}`
             : `${where}. ${qs.length} сұрақ, ${num(total)} ұпай, тапсырғандар: ${counts[t.id] || 0}`),
           h("div", { class: "row", style: { gap: ".35rem", marginTop: ".35rem" } },
             h("span", { class: "badge gray" }, (t.classes || []).length ? "Сыныптар: " + t.classes.join(", ") : "Барлық сыныптар"),
@@ -283,19 +312,18 @@
     const right = h("div", {},
       h("div", { class: "row between", style: { marginBottom: "1rem", alignItems: "flex-end" } },
         h("div", {}, sub ? h("div", { class: "small muted" }, sub) : null, h("h1", { style: { margin: 0 } }, heading)),
-        h("button", { class: "primary", onclick: async () => {
-          if (scope !== "tasks") return showEditor(null, newFolderId);
-          const type = await chooseTaskType();
-          if (type) showEditor(null, newFolderId, type);
-        } }, W.New)),
+        h("button", { class: "primary", onclick: () => showEditor(null, newFolderId, ttype || undefined) }, W.New)),
       shown.length ? h("div", { class: "rows" }, shown.map(testRow))
-        : h("div", { class: "card empty" }, scope === "tasks"
-            ? (selFolder === "all" ? "Әзірге тапсырма жоқ. «Жаңа тапсырма» батырмасын басып, түрін таңдаңыз: «Мен кіммін?», «Теңестір» немесе «Мені аяқта»."
+        : h("div", { class: "card empty" }, base === "tasks"
+            ? (selFolder === "all" ? `Әзірге «${TASK_TYPES[ttype].title}» тапсырмасы жоқ. Алдымен сол жақтан бөлім құрып, содан кейін «Жаңа тапсырма» батырмасын басыңыз.`
                                    : "Мұнда тапсырма жоқ. «Жаңа тапсырма» батырмасын бассаңыз, тапсырма осы жерге орналасады.")
             : (selFolder === "all" ? "Әзірге тест жоқ. «Жаңа тест» батырмасын басыңыз: сұрақтарды қолмен немесе Word файлынан қосуға болады."
                                    : "Мұнда тест жоқ. «Жаңа тест» батырмасын бассаңыз, тест осы жерге орналасады.")));
 
-    setView(tabs(), h("div", { class: "split" }, tree, right));
+    const crumbs = base === "tasks" ? h("nav", { class: "crumbs", "aria-label": "Жол" },
+      h("button", { onclick: () => { taskType = null; route(); } }, "Тапсырма түрлері"),
+      h("span", { class: "sep" }, "/"), h("span", {}, TASK_TYPES[ttype].title)) : null;
+    setView(tabs(), crumbs, h("div", { class: "split" }, tree, right));
   }
 
   // =====================================================================
@@ -466,8 +494,8 @@
     }
     const back = h("button", { class: "ghost sm", onclick: async () => {
       if (dirty && !(await confirmBox("Сақталмаған өзгерістер бар. Шыға берейін бе?", "Шығу", true))) return;
-      dirty = false; tab = "tasks"; route();
-    } }, "Тапсырмаларға оралу");
+      dirty = false; tab = "tasks"; taskType = type; route();
+    } }, `«${(TASK_TYPES[type] || {}).title || "Тапсырма"}» тізіміне оралу`);
 
     setView(
       h("div", { class: "editor-sticky no-print" }, h("div", { class: "row between" }, h("div", { class: "row" }, back, summary), saveBtn)),
