@@ -2,7 +2,8 @@
 (function () {
   "use strict";
   const A = window.App;
-  const { sb, configured, h, rich, toast, modal, confirmBox, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct, clean, LETTERS, symbolOf, childrenMap, tintMap } = A;
+  const { sb, configured, h, rich, toast, modal, confirmBox, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct, clean, LETTERS, symbolOf, childrenMap, tintMap,
+    chemifyText, splitEq, splitTerms, isBalanced, TASK_TYPES, esc } = A;
   const app = document.getElementById("app");
   const who = document.getElementById("who");
   let user = null;
@@ -56,12 +57,13 @@
   //  ҚОЙЫНДЫЛАР
   // =====================================================================
   function tabs() {
-    const items = [["tests", "Тесттер"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
+    const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
     return h("nav", { class: "tabs no-print" }, items.map(([k, label]) =>
       h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; route(); } }, label)));
   }
   function route(arg) {
-    if (tab === "tests") return showTests();
+    if (tab === "tests") return showTests("tests");
+    if (tab === "tasks") return showTests("tasks");
     if (tab === "students") return showStudents();
     if (tab === "results") return showResults(arg);
   }
@@ -71,10 +73,19 @@
   // =====================================================================
   const LEVEL = ["Бөлім", "Тақырып", "Тақырыпша"];
   const LEVEL_NEW = ["Жаңа бөлім", "Жаңа тақырып", "Жаңа тақырыпша"];
-  let selFolder = "all";   // "all" | "none" | бөлім id-і
+  const SEL = { tests: "all", tasks: "all" };   // "all" | "none" | бөлім id-і
+  const OPEN_KEY = "chem_tree_open";
+  let openSet;
+  try { openSet = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); } catch (_) { openSet = new Set(); }
+  const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSet])); } catch (_) {} };
+  const WORDS = {
+    tests: { one: "тест", All: "Барлық тесттер", none: "Бөлімсіз тесттер", New: "Жаңа тест", acc: "тестті" },
+    tasks: { one: "тапсырма", All: "Барлық тапсырмалар", none: "Бөлімсіз тапсырмалар", New: "Жаңа тапсырма", acc: "тапсырманы" }
+  };
 
-  async function loadFolders() {
-    return must(await sb.from("folders").select("id,parent_id,title,symbol,position,created_at").order("position").order("created_at"));
+  async function loadFolders(scope) {
+    const all = must(await sb.from("folders").select("id,parent_id,title,symbol,position,created_at,scope").order("position").order("created_at"));
+    return all.filter(f => (f.scope || "tests") === (scope || "tests"));
   }
   // Ағашты тізім ретінде: [{f, depth}]
   function flatTree(folders) {
@@ -105,19 +116,25 @@
     return { title: t.value.trim(), symbol: sym.value.trim() };
   }
 
-  async function showTests() {
+  async function showTests(scope) {
+    scope = scope || "tests";
+    const W = WORDS[scope];
+    const reload = () => showTests(scope);
+    let selFolder = SEL[scope];
+    const setSel = v => { SEL[scope] = v; };
     loading();
     let tests, folders, counts = {};
     try {
       [tests, folders] = await Promise.all([
-        sb.from("tests").select("id,title,description,content,published,show_answers,created_at,folder_id,position,max_attempts,classes").order("position").order("created_at").then(must),
-        loadFolders()
+        sb.from("tests").select("id,title,description,content,published,show_answers,created_at,folder_id,position,max_attempts,classes,kind").order("position").order("created_at").then(must),
+        loadFolders(scope)
       ]);
+      tests = tests.filter(t => (t.kind || "test") === (scope === "tasks" ? "task" : "test"));
       must(await sb.from("attempts").select("test_id")).forEach(a => { counts[a.test_id] = (counts[a.test_id] || 0) + 1; });
     } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
 
     const byId = {}; folders.forEach(f => { byId[f.id] = f; });
-    if (selFolder !== "all" && selFolder !== "none" && !byId[selFolder]) selFolder = "all";
+    if (selFolder !== "all" && selFolder !== "none" && !byId[selFolder]) { selFolder = "all"; setSel("all"); }
     const kids = childrenMap(folders), tint = tintMap(folders);
     const descendants = id => [id, ...(kids[id] || []).flatMap(c => descendants(c.id))];
     const countIn = id => { const ids = new Set(descendants(id)); return tests.filter(t => ids.has(t.folder_id)).length; };
@@ -129,15 +146,16 @@
       if (!v) return;
       const siblings = kids[parent ? parent.id : "root"] || [];
       try {
-        const ins = must(await sb.from("folders").insert({ parent_id: parent ? parent.id : null, title: v.title, symbol: v.symbol,
+        const ins = must(await sb.from("folders").insert({ parent_id: parent ? parent.id : null, title: v.title, symbol: v.symbol, scope,
           position: siblings.length ? Math.max(...siblings.map(x => x.position)) + 1 : 0 }).select("id").single());
-        selFolder = ins.id; showTests();
+        if (parent) { openSet.add(parent.id); saveOpen(); }
+        setSel(ins.id); reload();
       } catch (ex) { toast(errMsg(ex)); }
     }
     async function renameFolder(f, depth) {
       const v = await folderDialog(`${LEVEL[depth]}ты өзгерту`, f, depth);
       if (!v) return;
-      try { must(await sb.from("folders").update({ title: v.title, symbol: v.symbol }).eq("id", f.id)); showTests(); }
+      try { must(await sb.from("folders").update({ title: v.title, symbol: v.symbol }).eq("id", f.id)); reload(); }
       catch (ex) { toast(errMsg(ex)); }
     }
     async function moveFolder(f, d) {
@@ -147,22 +165,29 @@
       const order = sib.slice(); [order[i], order[j]] = [order[j], order[i]];
       try {
         for (let k = 0; k < order.length; k++) if (order[k].position !== k) must(await sb.from("folders").update({ position: k }).eq("id", order[k].id));
-        showTests();
+        reload();
       } catch (ex) { toast(errMsg(ex)); }
     }
     async function deleteFolder(f, depth) {
       const n = countIn(f.id), sub = descendants(f.id).length - 1;
       const msg = `«${f.title}» өшірілсін бе?` + (sub ? ` Ішіндегі ${sub} тақырып/тақырыпша да өшеді.` : "") +
-        (n ? ` ${n} тест өшпейді, «Бөлімсіз тесттер» тізіміне ауысады.` : "");
+        (n ? ` ${n} ${W.one} өшпейді, «${W.none}» тізіміне ауысады.` : "");
       if (!(await confirmBox(msg, "Өшіру", true))) return;
-      try { must(await sb.from("folders").delete().eq("id", f.id)); if (selFolder === f.id) selFolder = "all"; showTests(); }
+      try { must(await sb.from("folders").delete().eq("id", f.id)); if (selFolder === f.id) setSel("all"); reload(); }
       catch (ex) { toast(errMsg(ex)); }
     }
 
-    const node = (key, label, count, depth, f) => {
+    const node = (key, label, count, depth, f, hasKids, open) => {
       const sym = f && depth === 0 ? h("span", { class: "tree-sym", style: { background: `var(--${tint[f.id]}-bg)`, color: `var(--${tint[f.id]}-ink)` } }, symbolOf(f)) : null;
+      const toggle = () => { if (open) openSet.delete(key); else openSet.add(key); saveOpen(); };
       return h("div", { class: `tree-node lvl-${depth}` + (selFolder === key ? " active" : "") },
-        h("button", { class: "tn-label", onclick: () => { selFolder = key; showTests(); } }, sym, h("span", {}, label), h("span", { class: "tn-count" }, count)),
+        f ? (hasKids
+          ? h("button", { class: "tn-caret", "aria-label": open ? "Жабу" : "Ашу", "aria-expanded": open ? "true" : "false", onclick: () => { toggle(); reload(); } }, open ? "▾" : "▸")
+          : h("span", { class: "tn-caret-space" })) : null,
+        h("button", { class: "tn-label", onclick: () => {
+          if (hasKids && (!open || selFolder === key)) toggle();
+          setSel(key); reload();
+        } }, sym, h("span", {}, label), h("span", { class: "tn-count" }, count)),
         f ? h("div", { class: "tn-tools" },
           depth < 2 ? h("button", { title: `${LEVEL[depth + 1]} қосу`, "aria-label": `${LEVEL[depth + 1]} қосу`, onclick: () => addFolder(f, depth + 1) }, "+") : null,
           h("button", { title: "Атауын өзгерту", "aria-label": "Атауын өзгерту", onclick: () => renameFolder(f, depth) }, "✎"),
@@ -170,14 +195,21 @@
           h("button", { title: "Төмен", "aria-label": "Төмен", onclick: () => moveFolder(f, 1) }, "↓"),
           h("button", { title: "Өшіру", "aria-label": "Өшіру", onclick: () => deleteFolder(f, depth) }, "✕")) : null);
     };
+    // Таңдалған бөлімнің ата-аналары ашық тұрады
+    if (byId[selFolder]) for (let x = byId[byId[selFolder].parent_id]; x; x = byId[x.parent_id]) openSet.add(x.id);
+    const branch = (parentKey, depth) => (kids[parentKey] || []).flatMap(f => {
+      const hasKids = (kids[f.id] || []).length > 0, open = openSet.has(f.id);
+      const row = node(f.id, f.title, countIn(f.id), depth, f, hasKids, open);
+      return open && hasKids ? [row, ...branch(f.id, depth + 1)] : [row];
+    });
     const tree = h("aside", { class: "card tree" },
       h("div", { class: "tree-title" }, h("h3", {}, "Бөлімдер"), h("button", { class: "sm", onclick: () => addFolder(null, 0) }, "+ Бөлім")),
-      node("all", "Барлық тесттер", tests.length, 0, null),
+      node("all", W.All, tests.length, 0, null),
       h("div", { class: "tree-sep" }),
-      flatTree(folders).map(({ f, depth }) => node(f.id, f.title, countIn(f.id), depth, f)),
+      branch("root", 0),
       folders.length ? h("div", { class: "tree-sep" }) : h("p", { class: "small muted", style: { margin: ".4rem .3rem" } },
-        "Бөлім → тақырып → тақырыпша құрып, тесттерді соларға орналастырыңыз."),
-      node("none", "Бөлімсіз тесттер", loose.length, 0, null));
+        `Бөлім → тақырып → тақырыпша құрып, ${scope === "tasks" ? "тапсырмаларды" : "тесттерді"} соларға орналастырыңыз.`),
+      node("none", W.none, loose.length, 0, null));
 
     // ---- таңдалған бөлімнің тесттері ----
     const order = {}; flatTree(folders).forEach(({ f }, i) => { order[f.id] = i; });
@@ -185,8 +217,8 @@
       String(a.created_at).localeCompare(String(b.created_at));
     tests.sort(byTree);
     let shown, heading, sub = "";
-    if (selFolder === "all") { shown = tests; heading = "Барлық тесттер"; }
-    else if (selFolder === "none") { shown = loose; heading = "Бөлімсіз тесттер"; }
+    if (selFolder === "all") { shown = tests; heading = W.All; }
+    else if (selFolder === "none") { shown = loose; heading = W.none; }
     else {
       const ids = new Set(descendants(selFolder));
       shown = tests.filter(t => ids.has(t.folder_id));
@@ -205,22 +237,22 @@
       try {
         must(await sb.from("tests").insert({ title: (t.title || "") + " (көшірме)", description: t.description, content: t.content,
           published: false, show_answers: t.show_answers, folder_id: t.folder_id, position: t.position,
-          max_attempts: t.max_attempts, classes: t.classes || [] }));
-        toast("Көшірме жасалды"); showTests();
+          max_attempts: t.max_attempts, classes: t.classes || [], kind: t.kind || "test" }));
+        toast("Көшірме жасалды"); reload();
       } catch (ex) { toast(errMsg(ex)); }
     }
     async function moveTest(t) {
       const sel = folderSelect(folders, t.folder_id);
-      const ok = await modal(h("div", { class: "stack" }, h("h3", {}, `«${t.title}» тестін орналастыру`),
+      const ok = await modal(h("div", { class: "stack" }, h("h3", {}, `«${t.title}» ${W.acc} орналастыру`),
         h("label", { class: "field" }, "Бөлім, тақырып немесе тақырыпша", sel)),
         [{ label: "Бас тарту", value: false }, { label: "Орналастыру", value: true, class: "primary" }]);
       if (!ok) return;
-      try { must(await sb.from("tests").update({ folder_id: sel.value || null }).eq("id", t.id)); toast("Орналастырылды"); showTests(); }
+      try { must(await sb.from("tests").update({ folder_id: sel.value || null }).eq("id", t.id)); toast("Орналастырылды"); reload(); }
       catch (ex) { toast(errMsg(ex)); }
     }
     async function del(t) {
-      if (!(await confirmBox(`«${t.title}» тестін және оның барлық нәтижелерін өшіресіз бе? Бұны қайтаруға болмайды.`, "Өшіру", true))) return;
-      try { must(await sb.from("tests").delete().eq("id", t.id)); toast("Өшірілді"); showTests(); }
+      if (!(await confirmBox(`«${t.title}» ${W.acc} және оның барлық нәтижелерін өшіресіз бе? Бұны қайтаруға болмайды.`, "Өшіру", true))) return;
+      try { must(await sb.from("tests").delete().eq("id", t.id)); toast("Өшірілді"); reload(); }
       catch (ex) { toast(errMsg(ex)); }
     }
 
@@ -231,8 +263,10 @@
       const where = t.folder_id && byId[t.folder_id] ? folderPath(folders, t.folder_id) : "Бөлімсіз";
       return h("div", { class: "test-row admin" },
         h("div", { class: "t-main" },
-          h("div", { class: "t-title" }, t.title || "Атаусыз тест"),
-          h("div", { class: "t-sub" }, `${where}. ${qs.length} сұрақ, ${num(total)} ұпай, тапсырғандар: ${counts[t.id] || 0}`),
+          h("div", { class: "t-title" }, t.title || (scope === "tasks" ? "Атаусыз тапсырма" : "Атаусыз тест")),
+          h("div", { class: "t-sub" }, scope === "tasks"
+            ? `${where}. ${(TASK_TYPES[(t.content || {}).task_type] || {}).title || "Тапсырма"}, ${num(total)} ұпай, орындағандар: ${counts[t.id] || 0}`
+            : `${where}. ${qs.length} сұрақ, ${num(total)} ұпай, тапсырғандар: ${counts[t.id] || 0}`),
           h("div", { class: "row", style: { gap: ".35rem", marginTop: ".35rem" } },
             h("span", { class: "badge gray" }, (t.classes || []).length ? "Сыныптар: " + t.classes.join(", ") : "Барлық сыныптар"),
             h("span", { class: "badge gray" }, t.max_attempts === 0 ? "Шексіз тапсыру" : "Бір рет тапсыру"))),
@@ -249,13 +283,203 @@
     const right = h("div", {},
       h("div", { class: "row between", style: { marginBottom: "1rem", alignItems: "flex-end" } },
         h("div", {}, sub ? h("div", { class: "small muted" }, sub) : null, h("h1", { style: { margin: 0 } }, heading)),
-        h("button", { class: "primary", onclick: () => showEditor(null, newFolderId) }, "Жаңа тест")),
+        h("button", { class: "primary", onclick: async () => {
+          if (scope !== "tasks") return showEditor(null, newFolderId);
+          const type = await chooseTaskType();
+          if (type) showEditor(null, newFolderId, type);
+        } }, W.New)),
       shown.length ? h("div", { class: "rows" }, shown.map(testRow))
-        : h("div", { class: "card empty" }, selFolder === "all"
-            ? "Әзірге тест жоқ. «Жаңа тест» батырмасын басыңыз: сұрақтарды қолмен немесе Word файлынан қосуға болады."
-            : "Мұнда тест жоқ. «Жаңа тест» батырмасын бассаңыз, тест осы жерге орналасады."));
+        : h("div", { class: "card empty" }, scope === "tasks"
+            ? (selFolder === "all" ? "Әзірге тапсырма жоқ. «Жаңа тапсырма» батырмасын басып, түрін таңдаңыз: «Мен кіммін?», «Теңестір» немесе «Мені аяқта»."
+                                   : "Мұнда тапсырма жоқ. «Жаңа тапсырма» батырмасын бассаңыз, тапсырма осы жерге орналасады.")
+            : (selFolder === "all" ? "Әзірге тест жоқ. «Жаңа тест» батырмасын басыңыз: сұрақтарды қолмен немесе Word файлынан қосуға болады."
+                                   : "Мұнда тест жоқ. «Жаңа тест» батырмасын бассаңыз, тест осы жерге орналасады.")));
 
     setView(tabs(), h("div", { class: "split" }, tree, right));
+  }
+
+  // =====================================================================
+  //  ТАПСЫРМАЛАР: «Мен кіммін?», «Теңестір», «Мені аяқта»
+  // =====================================================================
+  const TASK_FORMAT = {
+    whoami: {
+      ph: "Күкірт қышқылы — H2SO4\nАс тұзы — NaCl\nСөндірілген әк — Ca(OH)2\n\nМетан — CH4\nЭтанол — C2H5OH",
+      help: "Әр жолға бір жұп: атауы, сызықша (—), формуласы. Бос жол қалдырсаңыз, жаңа топ басталады (әр топ бөлек сәйкестендіріледі). Ұпай: әр дұрыс жұпқа 1."
+    },
+    balance: {
+      ph: "2H2 + O2 = 2H2O\n4Al + 3O2 = 2Al2O3\nFe2O3 + 3CO → 2Fe + 3CO2",
+      help: "Әр жолға бір реакция, дұрыс коэффициенттерімен. Тең белгісі ретінде =, → немесе -> жазуға болады. Оқушы коэффициенттерді өзі қояды. Ұпай: әр реакцияға 1."
+    },
+    complete: {
+      ph: "Zn + 2HCl → ZnCl2 + H2\nCaCO3 → CaO + CO2\nNaOH + HCl → NaCl + H2O | H2O + NaCl",
+      help: "Әр жолға толық реакция. Бағыттауыштың (→) сол жағы оқушыға беріледі, оң жағы дұрыс жауап. Бірнеше дұрыс жазылуы болса, | белгісімен бөліңіз. Заттардың реті, бос орындар, кириллица/латын әріптері ескерілмейді. Ұпай: әр реакцияға 1."
+    }
+  };
+
+  async function chooseTaskType() {
+    let pick = null;
+    const box = h("div", { class: "stack" }, h("h3", {}, "Тапсырма түрін таңдаңыз"),
+      h("div", { class: "type-pick" }, Object.entries(TASK_TYPES).map(([k, v]) =>
+        h("button", { class: "type-card", onclick: () => { pick = k; document.querySelector(".modal-back").click(); } },
+          h("b", {}, v.title), h("span", { class: "small muted" }, v.hint)))));
+    await modal(box, [{ label: "Бас тарту", value: null }]);
+    return pick;
+  }
+
+  // Детерминистік араластыру: мәтін өзгермесе, нұсқалардың реті де өзгермейді
+  function seeded(str) {
+    let h1 = 1779033703 ^ str.length;
+    for (let i = 0; i < str.length; i++) { h1 = Math.imul(h1 ^ str.charCodeAt(i), 3432918353); h1 = (h1 << 13) | (h1 >>> 19); }
+    let a = h1 >>> 0;
+    return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+  // Мәтіннен тапсырма элементтерін құру. Қайтарады: {questions, items:[{ok, html, msg}]}
+  function parseTask(type, text) {
+    const lines = String(text || "").split(/\r?\n/);
+    const out = { questions: [], items: [] };
+    if (type === "whoami") {
+      const groups = []; let cur = [];
+      lines.forEach(l => {
+        const t = l.trim();
+        if (!t) { if (cur.length) groups.push(cur); cur = []; return; }
+        if (t.startsWith("#")) return;
+        const m = t.match(/^(.+?)(?:\t|\s+[—–-]\s+|\s*=\s*|\s*;\s*)(.+)$/);
+        if (!m) { out.items.push({ ok: false, html: esc(t), msg: "сызықшасы (—) табылмады" }); return; }
+        cur.push({ name: m[1].trim(), f: m[2].trim() });
+      });
+      if (cur.length) groups.push(cur);
+      groups.forEach((g, gi) => {
+        const rnd = seeded(g.map(x => x.name + "|" + x.f).join("\n"));
+        const order = g.map((_, i) => i);
+        for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        const keyOf = {}; order.forEach((src, pos) => { keyOf[src] = KEYS[pos] || ("K" + pos); });
+        const options = order.map((src, pos) => ({ k: KEYS[pos] || ("K" + pos), h: g[src].f }));
+        const left = g.map((x, i) => ({ k: String(i + 1), h: esc(x.name) }));
+        const answer = {}; g.forEach((_, i) => { answer[String(i + 1)] = keyOf[i]; });
+        out.questions.push({ id: "w" + (gi + 1), type: "whoami", stem: "", left, options, answer, points: g.length });
+        g.forEach(x => out.items.push({ ok: true, html: `${esc(x.name)} — ${chemifyText(x.f)}`, group: gi + 1 }));
+      });
+      if (groups.length > 1) out.items.forEach(it => { if (it.group) it.html = `<span class="muted">${it.group}-топ.</span> ` + it.html; });
+    } else if (type === "balance") {
+      lines.forEach((l, i) => {
+        const t = l.trim(); if (!t || t.startsWith("#")) return;
+        const [L, R] = splitEq(t);
+        const lt = splitTerms(L), rt = splitTerms(R);
+        if (!R || !lt.length || !rt.length) { out.items.push({ ok: false, html: esc(t), msg: "тең белгісі (= немесе →) табылмады" }); return; }
+        const species = [...lt.map(x => ({ f: x.f, side: "L" })), ...rt.map(x => ({ f: x.f, side: "R" }))];
+        const coefs = [...lt, ...rt].map(x => x.coef || "1");
+        const ok = isBalanced(species, coefs);
+        const shown = species.map((sp, k) => (k > 0 ? (species[k - 1].side !== sp.side ? " → " : " + ") : "") +
+          (coefs[k] !== "1" ? coefs[k] : "") + chemifyText(sp.f)).join("");
+        out.questions.push({ id: "b" + (out.questions.length + 1), type: "balance", stem: "", species, answer: coefs, points: 1 });
+        out.items.push({ ok, html: shown, msg: ok ? "" : "атомдар саны тең емес, коэффициенттерді тексеріңіз" , soft: !ok });
+      });
+    } else if (type === "complete") {
+      lines.forEach(l => {
+        const t = l.trim(); if (!t || t.startsWith("#")) return;
+        const m = t.match(/^(.*?)\s*(→|->|=|⟶)\s*(.+)$/);
+        if (!m || !m[1].trim()) { out.items.push({ ok: false, html: esc(t), msg: "бағыттауыш (→) табылмады" }); return; }
+        const start = m[1].trim() + " →";
+        const answers = m[3].split("|").map(x => x.trim()).filter(Boolean);
+        out.questions.push({ id: "c" + (out.questions.length + 1), type: "complete", stem: "", start, answer: answers, points: 1 });
+        out.items.push({ ok: true, html: `${chemifyText(start)} <b>${answers.map(chemifyText).join(" <span class='muted'>немесе</span> ")}</b>` });
+      });
+    }
+    return out;
+  }
+
+  async function showTaskEditor(doc, attemptsCount) {
+    const type = doc.content.task_type;
+    const T = TASK_TYPES[type], F = TASK_FORMAT[type];
+    dirty = false;
+    let folders = [];
+    try { folders = await loadFolders("tasks"); } catch (_) {}
+    let allClasses = [];
+    try { allClasses = [...new Set(must(await sb.from("students").select("class_name")).map(x => (x.class_name || "").trim()).filter(Boolean))].sort(); } catch (_) {}
+    doc.classes = Array.isArray(doc.classes) ? doc.classes : [];
+    doc.classes.forEach(c => { if (!allClasses.includes(c)) allClasses.push(c); });
+
+    const titleIn = h("input", { type: "text", value: doc.title, placeholder: `Мысалы: ${T.title} — қышқылдар`, oninput: () => { doc.title = titleIn.value; dirty = true; } });
+    const descIn = h("input", { type: "text", value: doc.description || "", placeholder: "Қысқаша сипаттама (міндетті емес)", oninput: () => { doc.description = descIn.value; dirty = true; } });
+    const folderSel = folderSelect(folders, doc.folder_id);
+    folderSel.onchange = () => { doc.folder_id = folderSel.value || null; dirty = true; };
+    const modeSel = h("select", { style: { maxWidth: "460px", display: "block" }, onchange: () => { doc.max_attempts = Number(modeSel.value); dirty = true; } },
+      h("option", { value: "1", selected: doc.max_attempts !== 0 }, "Бір рет (қайта орындауға сіз ғана рұқсат бересіз)"),
+      h("option", { value: "0", selected: doc.max_attempts === 0 }, "Шексіз (оқушы қалағанша қайта орындай алады)"));
+    const classBox = h("div", { class: "row", style: { gap: ".4rem .9rem", marginTop: ".35rem" } });
+    const renderClasses = () => {
+      classBox.innerHTML = "";
+      classBox.appendChild(h("label", { class: "row small", style: { gap: ".35rem", cursor: "pointer", color: "var(--ink)" } },
+        h("input", { type: "checkbox", checked: !doc.classes.length, onchange: () => { doc.classes = []; dirty = true; renderClasses(); } }), "Барлық сыныптар"));
+      allClasses.forEach(c => {
+        const cb = h("input", { type: "checkbox", checked: doc.classes.includes(c), onchange: () => {
+          doc.classes = cb.checked ? [...doc.classes, c] : doc.classes.filter(x => x !== c); dirty = true; renderClasses(); } });
+        classBox.appendChild(h("label", { class: "row small", style: { gap: ".35rem", cursor: "pointer", color: "var(--ink)" } }, cb, c));
+      });
+    };
+    renderClasses();
+    const showAnsCb = h("input", { type: "checkbox", checked: doc.show_answers !== false, onchange: () => { doc.show_answers = showAnsCb.checked; dirty = true; } });
+
+    const area = h("textarea", { class: "task-src", rows: 12, placeholder: F.ph, spellcheck: "false" });
+    area.value = doc.content.source || "";
+    const preview = h("div", {});
+    const summary = h("span", { class: "small muted" });
+    let parsed = parseTask(type, area.value);
+    const paint = () => {
+      parsed = parseTask(type, area.value);
+      const pts = parsed.questions.reduce((a, q) => a + q.points, 0);
+      const bad = parsed.items.filter(i => !i.ok && !i.soft).length, soft = parsed.items.filter(i => i.soft).length;
+      summary.textContent = `${parsed.items.filter(i => i.ok || i.soft).length} элемент, ${pts} ұпай`;
+      preview.innerHTML = "";
+      if (!parsed.items.length) { preview.appendChild(h("p", { class: "small muted" }, "Мәтін жазылған сайын мұнда оқушыға қалай көрінетіні шығады.")); return; }
+      if (bad || soft) preview.appendChild(h("div", { class: "notice", style: { marginBottom: ".6rem" } },
+        bad ? `${bad} жол танылмады — олар сақталмайды. ` : "", soft ? `${soft} реакцияда атомдар саны тең емес — тексеріңіз.` : ""));
+      preview.appendChild(h("ol", { class: "task-preview" }, parsed.items.map(it =>
+        h("li", { class: it.ok ? "" : "bad" }, h("span", { html: it.html }), it.msg ? h("span", { class: "small " + (it.soft ? "mt-bad" : "mt-bad") }, "  " + it.msg) : null))));
+    };
+    area.addEventListener("input", () => { dirty = true; paint(); });
+    paint();
+
+    const saveBtn = h("button", { class: "primary", onclick: () => save() }, "Сақтау");
+    async function save() {
+      if (!doc.title.trim()) { toast("Тапсырма атауын жазыңыз"); titleIn.focus(); return; }
+      parsed = parseTask(type, area.value);
+      if (!parsed.questions.length) { toast("Тапсырма бос: мәтін өрісіне кемінде бір жол жазыңыз"); area.focus(); return; }
+      saveBtn.disabled = true; saveBtn.textContent = "Сақталуда...";
+      const row = { title: doc.title.trim(), description: (doc.description || "").trim(), kind: "task",
+        content: { task_type: type, source: area.value, questions: parsed.questions, contexts: {} },
+        folder_id: doc.folder_id || null, show_answers: doc.show_answers !== false, max_attempts: doc.max_attempts === 0 ? 0 : 1,
+        classes: doc.classes || [], updated_at: new Date().toISOString() };
+      try {
+        if (doc.id) must(await sb.from("tests").update(row).eq("id", doc.id));
+        else { const ins = must(await sb.from("tests").insert({ ...row, published: false }).select("id").single()); doc.id = ins.id; }
+        dirty = false; toast("Сақталды ✓");
+      } catch (ex) { toast("Сақталмады: " + errMsg(ex), 6000); }
+      saveBtn.disabled = false; saveBtn.textContent = "Сақтау";
+    }
+    const back = h("button", { class: "ghost sm", onclick: async () => {
+      if (dirty && !(await confirmBox("Сақталмаған өзгерістер бар. Шыға берейін бе?", "Шығу", true))) return;
+      dirty = false; tab = "tasks"; route();
+    } }, "Тапсырмаларға оралу");
+
+    setView(
+      h("div", { class: "editor-sticky no-print" }, h("div", { class: "row between" }, h("div", { class: "row" }, back, summary), saveBtn)),
+      attemptsCount ? h("div", { class: "notice", style: { marginBottom: "1rem" } },
+        `Бұл тапсырманы ${attemptsCount} оқушы орындаған. Мәтінді өзгертсеңіз, олардың бұрынғы ұпайы қайта есептелмейді.`) : null,
+      h("div", { class: "card stack" },
+        h("div", { class: "row" }, h("span", { class: "badge" }, T.title), h("span", { class: "small muted" }, T.hint)),
+        h("label", { class: "field" }, "Тапсырма атауы", titleIn),
+        h("label", { class: "field" }, "Сипаттама", descIn),
+        h("label", { class: "field" }, "Орны: бөлім, тақырып немесе тақырыпша", folderSel),
+        h("label", { class: "field" }, "Неше рет орындауға болады", modeSel),
+        h("div", { class: "field" }, "Кімге: тапсырма тек белгіленген сыныптардың оқушыларына көрінеді", classBox),
+        h("label", { class: "row small", style: { gap: ".4rem", cursor: "pointer" } }, showAnsCb, "Орындаған соң оқушыға дұрыс және қате жауаптарын көрсету")),
+      h("div", { class: "split task-split", style: { marginTop: "1rem" } },
+        h("div", { class: "card stack" }, h("b", {}, "Мазмұны"), h("p", { class: "small muted", style: { margin: 0 } }, F.help), area),
+        h("div", { class: "card stack" }, h("b", {}, "Алдын ала қарау"), preview)),
+      h("div", { class: "row", style: { justifyContent: "flex-end", marginTop: "1rem" } }, h("button", { class: "primary big", onclick: () => save() }, "Сақтау")));
   }
 
   // =====================================================================
@@ -370,7 +594,7 @@
       fileIn);
   }
 
-  async function showEditor(testId, folderId) {
+  async function showEditor(testId, folderId, taskType) {
     loading();
     let doc;
     let attemptsCount = 0;
@@ -381,10 +605,12 @@
         attemptsCount = count || 0;
       } else {
         doc = { id: null, title: "", description: "", published: false, show_answers: true, folder_id: folderId || null,
-          max_attempts: 1, classes: [], content: { questions: [], contexts: {} } };
+          max_attempts: 1, classes: [], kind: taskType ? "task" : "test",
+          content: taskType ? { task_type: taskType, source: "", questions: [], contexts: {} } : { questions: [], contexts: {} } };
       }
     } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
     doc.content = doc.content || {};
+    if (doc.kind === "task") return showTaskEditor(doc, attemptsCount);
     doc.content.questions = doc.content.questions || [];
     doc.content.contexts = doc.content.contexts || {};
     const C = doc.content;
@@ -393,7 +619,7 @@
     const titleIn = h("input", { type: "text", value: doc.title, placeholder: "Мысалы: Бейорганикалық химия — 1-нұсқа",
       oninput: () => { doc.title = titleIn.value; dirty = true; } });
     let folders = [];
-    try { folders = await loadFolders(); } catch (_) {}
+    try { folders = await loadFolders("tests"); } catch (_) {}
     const folderSel = folderSelect(folders, doc.folder_id);
     folderSel.onchange = () => { doc.folder_id = folderSel.value || null; dirty = true; };
     let allClasses = [];
@@ -891,12 +1117,15 @@
     loading();
     let tests, students;
     try {
-      tests = must(await sb.from("tests").select("id,title,content,created_at,classes,max_attempts").order("created_at", { ascending: false }));
+      tests = must(await sb.from("tests").select("id,title,content,created_at,classes,max_attempts,kind").order("created_at", { ascending: false }));
       students = must(await sb.from("students").select("id,full_name,class_name").order("class_name").order("full_name"));
     } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
     if (!tests.length) return setView(tabs(), h("h1", {}, "Нәтижелер"), h("div", { class: "notice info" }, "Әзірге тест жоқ."));
 
-    const testSel = h("select", { style: { width: "auto", maxWidth: "100%" } }, tests.map(t => h("option", { value: t.id, selected: t.id === preselect }, t.title)));
+    const opt = t => h("option", { value: t.id, selected: t.id === preselect }, t.title);
+    const tOnly = tests.filter(t => (t.kind || "test") === "test"), kOnly = tests.filter(t => t.kind === "task");
+    const testSel = h("select", { style: { width: "auto", maxWidth: "100%" } },
+      kOnly.length ? [h("optgroup", { label: "Тесттер" }, tOnly.map(opt)), h("optgroup", { label: "Тапсырмалар" }, kOnly.map(opt))] : tOnly.map(opt));
     const classes = [...new Set(students.map(s => s.class_name).filter(Boolean))].sort();
     const classSel = h("select", { style: { width: "auto" } }, h("option", { value: "" }, "Барлық сыныптар"),
       classes.map(c => h("option", { value: c, selected: c === resClass }, c)));
@@ -920,11 +1149,27 @@
 
       const view = s => {
         const a = byStudent[s.id];
-        const box = h("div", {},
-          h("h3", {}, `${s.full_name}${s.class_name ? ", " + s.class_name : ""}`),
-          h("p", { class: "muted" }, `${test.title} — ${num(a.score)} / ${num(a.max_score)} (${pct(a.score, a.max_score)}%), ${fmtDate(a.submitted_at)}`),
-          renderReview({ questions: qs, contexts: test.content.contexts, answers: a.answers, details: a.details }));
-        modal(box);
+        const box = h("div", {});
+        let changed = false;
+        const draw = () => {
+          box.innerHTML = "";
+          box.append(
+            h("h3", {}, `${s.full_name}${s.class_name ? ", " + s.class_name : ""}`),
+            h("p", { class: "muted" }, `${test.title} — ${num(a.score)} / ${num(a.max_score)} (${pct(a.score, a.max_score)}%), ${fmtDate(a.submitted_at)}`),
+            renderReview({ questions: qs, contexts: test.content.contexts, answers: a.answers, details: a.details }, { onOverride: override }));
+        };
+        // «Мені аяқта» жауабын мұғалім қолмен дұрыс/қате деп белгілей алады
+        async function override(q, d) {
+          const full = Number(d.earned) >= Number(d.points);
+          const details = (a.details || []).map(x => x.id === q.id ? { ...x, earned: full ? 0 : Number(x.points) } : x);
+          const score = details.reduce((acc, x) => acc + Number(x.earned), 0);
+          try {
+            must(await sb.from("attempts").update({ details, score }).eq("id", a.id));
+            a.details = details; a.score = score; changed = true; draw(); toast("Ұпай өзгертілді");
+          } catch (ex) { toast(errMsg(ex)); }
+        }
+        draw();
+        modal(box).then(() => { if (changed) load(); });
       };
       const allowRetake = async s => {
         if (!(await confirmBox(`${s.full_name} бұл тестті қайта тапсыра алады. Қазіргі нәтижесі өшпейді — оқушының тарихында «бұрынғы әрекет» болып сақталады. Келісесіз бе?`, "Иә, рұқсат беру"))) return;
@@ -955,7 +1200,13 @@
         return max ? Math.round((earned / max) * 100) : null;
       });
       const statBar = p => h("div", { class: "progress", style: { minWidth: "80px" } }, h("div", { style: { width: (p || 0) + "%", background: p < 40 ? "var(--bad)" : p < 70 ? "var(--warn)" : "var(--ok)" } }));
-      const plain = html => { const d = document.createElement("div"); d.innerHTML = clean(html); const t = d.textContent.trim(); return t.length > 70 ? t.slice(0, 70) + "…" : t; };
+      const plainHtml = html => { const d = document.createElement("div"); d.innerHTML = clean(html); const t = d.textContent.trim(); return t.length > 70 ? t.slice(0, 70) + "…" : t; };
+      const plain = (html, q) => {
+        if (q && q.type === "balance") return (q.species || []).map(x => x.f).join(" + ");
+        if (q && q.type === "complete") return q.start || "";
+        if (q && q.type === "whoami") return (q.left || []).map(x => plainHtml(x.h)).join(", ").slice(0, 70);
+        return plainHtml(html);
+      };
 
       out.innerHTML = "";
       out.append(
@@ -984,7 +1235,7 @@
           h("thead", {}, h("tr", {}, ["№", "Түрі", "Сұрақ", "Орындалуы"].map(x => h("th", {}, x)))),
           h("tbody", {}, qs.map((q, i) => h("tr", {},
             h("td", { class: "mono" }, i + 1), h("td", { class: "small" }, TYPE_LABEL[q.type]),
-            h("td", { class: "small" }, plain(q.stem)),
+            h("td", { class: "small" }, plain(q.stem, q)),
             h("td", {}, h("div", { class: "row", style: { flexWrap: "nowrap" } }, statBar(qStats[i]), h("span", { class: "small mono" }, qStats[i] == null ? "—" : qStats[i] + "%")))))))) : null
       );
     }

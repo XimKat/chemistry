@@ -1,7 +1,8 @@
 /* Оқушы беті: логин + құпиясөз → тесттер → тапсыру → нәтиже, менің нәтижелерім */
 (function () {
   "use strict";
-  const { sb, CFG, configured, h, rich, toast, modal, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct, symbolOf, childrenMap, tintMap } = window.App;
+  const { sb, CFG, configured, h, rich, toast, modal, errMsg, TYPE_LABEL, renderReview, fmtDate, num, pct, symbolOf, childrenMap, tintMap,
+    chemifyText, chemUni, TASK_TYPES } = window.App;
   const app = document.getElementById("app");
   const who = document.getElementById("who");
   const TOKEN_KEY = "chem_student_token";
@@ -94,6 +95,12 @@
       ]);
     } catch (ex) { if (ex.message !== "NO_SESSION") showLogin(errMsg(ex)); return; }
 
+    // Тесттер мен тапсырмалар бөлек көрсетіледі
+    const isTasks = homeTab === "tasks";
+    const unit = isTasks ? "тапсырма" : "тест";
+    const allItems = tests;
+    tests = allItems.filter(t => (t.kind || "test") === (isTasks ? "task" : "test"));
+    folders = folders.filter(f => (f.scope || "tests") === (isTasks ? "tasks" : "tests"));
     const byId = {}; folders.forEach(f => { byId[f.id] = f; });
     const kids = childrenMap(folders), tint = tintMap(folders);
     const testsIn = {};
@@ -102,9 +109,10 @@
     const deep = id => [...(testsIn[id] || []), ...(kids[id] || []).flatMap(c => deep(c.id))];
     if (curFolder && !byId[curFolder]) curFolder = null;
 
+    const tab = (k, label) => h("button", { class: homeTab === k ? "active" : "", onclick: () => { if (homeTab !== k) curFolder = null; homeTab = k; showHome(); } }, label);
     const seg = h("div", { class: "seg", role: "tablist" },
-      h("button", { class: homeTab === "tests" ? "active" : "", onclick: () => { homeTab = "tests"; showHome(); } }, "Тапсырмалар"),
-      h("button", { class: homeTab === "history" ? "active" : "", onclick: () => { homeTab = "history"; showHome(); } }, `Менің нәтижелерім (${history.length})`));
+      tab("tests", "Тесттер"), tab("tasks", "Тапсырмалар"),
+      tab("history", `Менің нәтижелерім (${history.length})`));
     const firstName = (me.full_name || "").trim().split(/\s+/)[1] || (me.full_name || "").trim().split(/\s+/)[0] || "";
 
     // ---- нәтижелер тарихы ----
@@ -126,7 +134,9 @@
 
     const testRow = t => {
       const a = t.attempt;
-      const info = [plural(t.question_count, "сұрақ")];
+      const info = [t.kind === "task"
+        ? ((TASK_TYPES[t.task_type] || {}).title || "Тапсырма") + (t.task_type === "whoami" ? "" : `, ${t.question_count} реакция`)
+        : plural(t.question_count, "сұрақ")];
       if (t.unlimited) info.push(t.attempts_count > 1 ? `${t.attempts_count} рет тапсырылды, соңғы нәтиже` : "қайта тапсыруға болады");
       if (t.description) info.push(t.description);
       return h("div", { class: "test-row" },
@@ -160,7 +170,7 @@
         });
         blocks.push(h("section", { class: "topic" },
           h("h2", {}, topic.title),
-          h("p", { class: "small muted", style: { margin: "0 0 .7rem" } }, `${doneCount(deep(topic.id))} / ${deep(topic.id).length} тест тапсырылды`),
+          h("p", { class: "small muted", style: { margin: "0 0 .7rem" } }, `${doneCount(deep(topic.id))} / ${deep(topic.id).length} ${unit} орындалды`),
           sub));
       });
       return setView(h("div", { class: "reading" },
@@ -168,8 +178,8 @@
         h("div", { class: "section-head" },
           h("div", { class: "sym-chip " + (tint[f.id] || "t0") }, symbolOf(path[0] === f ? f : f)),
           h("div", {}, h("h1", {}, f.title),
-            h("div", { class: "muted" }, `${doneCount(all)} / ${all.length} тест тапсырылды`))),
-        all.length ? blocks : h("div", { class: "card empty" }, "Бұл бөлімде әзірге тест жоқ.")));
+            h("div", { class: "muted" }, `${doneCount(all)} / ${all.length} ${unit} орындалды`))),
+        all.length ? blocks : h("div", { class: "card empty" }, `Бұл бөлімде әзірге ${unit} жоқ.`)));
     }
 
     // ---- барлық бөлімдер ----
@@ -177,18 +187,20 @@
     const loose = testsIn.none || [];
     setView(
       h("h1", {}, firstName ? `Сәлем, ${firstName}!` : "Тапсырмалар"),
-      h("p", { class: "muted", style: { margin: "0 0 .4rem" } }, "Бөлімді таңдап, тест тапсырыңыз. Жауаптарыңыз тапсырғанға дейін осы құрылғыда сақталады."),
+      h("p", { class: "muted", style: { margin: "0 0 .4rem" } }, isTasks
+        ? "«Мен кіммін?», «Теңестір», «Мені аяқта» тапсырмалары. Бөлімді таңдап, орындаңыз."
+        : "Бөлімді таңдап, тест тапсырыңыз. Жауаптарыңыз тапсырғанға дейін осы құрылғыда сақталады."),
       seg,
-      !tests.length ? h("div", { class: "card empty" }, "Мұғалім әлі тест жарияламаған.") : null,
+      !tests.length ? h("div", { class: "card empty" }, isTasks ? "Мұғалім әлі тапсырма жарияламаған." : "Мұғалім әлі тест жарияламаған.") : null,
       roots.length ? h("div", { class: "tiles" }, roots.map((f, i) => {
         const all = deep(f.id);
         return h("button", { class: "tile " + (tint[f.id] || "t0"), onclick: () => { curFolder = f.id; showHome(); } },
           h("span", { class: "tile-n" }, (kids.root || []).indexOf(f) + 1),
           h("span", { class: "tile-sym" }, symbolOf(f)),
           h("span", { class: "tile-name" }, f.title),
-          h("span", { class: "tile-meta" }, `${doneCount(all)} / ${all.length} тест`));
+          h("span", { class: "tile-meta" }, `${doneCount(all)} / ${all.length} ${unit}`));
       })) : null,
-      loose.length ? h("h2", {}, roots.length ? "Басқа тесттер" : "Тесттер") : null,
+      loose.length ? h("h2", {}, roots.length ? (isTasks ? "Басқа тапсырмалар" : "Басқа тесттер") : (isTasks ? "Тапсырмалар" : "Тесттер")) : null,
       loose.length ? h("div", { class: "reading" }, rows(loose)) : null
     );
   }
@@ -208,7 +220,9 @@
     const qs = test.questions || [];
     const isAnswered = q => {
       const a = answers[q.id];
-      if (q.type === "matching") return a && (q.left || []).every(L => a[L.k]);
+      if (q.type === "matching" || q.type === "whoami") return a && (q.left || []).every(L => a[L.k]);
+      if (q.type === "balance") return Array.isArray(a) && a.some(x => String(x || "").trim());
+      if (q.type === "complete") return typeof a === "string" && a.trim().length > 0;
       if (q.type === "multiple") return Array.isArray(a) && a.length > 0;
       return !!a;
     };
@@ -276,6 +290,43 @@
         if (multi) card.appendChild(h("p", { class: "small muted", style: { marginTop: 0 } }, "Барлық дұрыс жауаптарды белгілеңіз."));
         card.appendChild(opts);
         paint();
+      } else if (q.type === "whoami") {
+        const list = h("div", { class: "match-left" });
+        for (const L of q.left || []) {
+          const sel = h("select", { class: "who-sel", onchange: () => {
+            const cur = Object.assign({}, answers[q.id] || {});
+            if (sel.value) cur[L.k] = sel.value; else delete cur[L.k];
+            if (Object.keys(cur).length) answers[q.id] = cur; else delete answers[q.id];
+            save(); refresh();
+          } }, h("option", { value: "" }, "Формуланы таңда"),
+            (q.options || []).map(o => h("option", { value: o.k, selected: (answers[q.id] || {})[L.k] === o.k }, chemUni(o.h))));
+          list.appendChild(h("div", { class: "match-row who-row" }, h("div", {}, rich(L.h)), sel));
+        }
+        card.appendChild(list);
+      } else if (q.type === "balance") {
+        const cur = Array.isArray(answers[q.id]) ? answers[q.id].slice() : (q.species || []).map(() => "");
+        const line = h("div", { class: "eq-line eq-input" });
+        (q.species || []).forEach((sp, i) => {
+          if (i > 0) line.appendChild(h("span", { class: "eq-op" }, q.species[i - 1].side !== sp.side ? "→" : "+"));
+          const inp = h("input", { type: "text", inputmode: "numeric", maxlength: 2, class: "coef", value: cur[i] || "", "aria-label": "коэффициент", oninput: () => {
+            inp.value = inp.value.replace(/\D/g, "");
+            cur[i] = inp.value; answers[q.id] = cur.slice();
+            if (!cur.some(x => x)) delete answers[q.id];
+            save(); refresh();
+          } });
+          line.appendChild(h("span", { class: "eq-term" }, inp, h("span", { html: chemifyText(sp.f) })));
+        });
+        card.appendChild(line);
+      } else if (q.type === "complete") {
+        const prev = h("div", { class: "small muted eq-preview" });
+        const paint = () => { prev.innerHTML = inp.value.trim() ? chemifyText(q.start || "") + " " + chemifyText(window.App.latinize(inp.value)) : ""; };
+        const inp = h("input", { type: "text", class: "complete-in", autocomplete: "off", autocapitalize: "off", spellcheck: "false",
+          placeholder: "мыс.: ZnCl2 + H2", value: answers[q.id] || "", oninput: () => {
+            if (inp.value.trim()) answers[q.id] = inp.value; else delete answers[q.id];
+            save(); refresh(); paint();
+          } });
+        card.appendChild(h("div", { class: "eq-line eq-complete" }, h("span", { html: chemifyText(q.start || "") }), inp));
+        card.appendChild(prev); paint();
       } else if (q.type === "matching") {
         const left = h("div", { class: "match-left" });
         for (const L of q.left || []) {
@@ -334,6 +385,7 @@
             [{ label: "Жоқ", value: false }, { label: "Иә", value: true, class: "primary" }])) showHome();
         } }, "Артқа"),
         h("h1", {}, test.title),
+        test.kind === "task" && TASK_TYPES[test.task_type] ? h("p", { class: "notice info" }, TASK_TYPES[test.task_type].hint) : null,
         test.description ? h("p", { class: "muted" }, test.description) : null,
         h("div", { class: "qnav", "aria-label": "Сұрақтар" }, navLinks)),
       body),

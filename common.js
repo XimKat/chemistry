@@ -13,7 +13,16 @@
   const TYPE_LABEL = {
     single: "Бір дұрыс жауап",
     multiple: "Бір немесе бірнеше дұрыс жауап",
-    matching: "Сәйкестендіру"
+    matching: "Сәйкестендіру",
+    whoami: "Мен кіммін?",
+    balance: "Теңестір",
+    complete: "Мені аяқта"
+  };
+  // Тапсырма түрлері (тест емес)
+  const TASK_TYPES = {
+    whoami: { title: "Мен кіммін?", hint: "Заттың атауын оның формуласымен сәйкестендір." },
+    balance: { title: "Теңестір", hint: "Реакция теңдеуіндегі коэффициенттерді қой. Бос қалған орын 1 деп есептеледі." },
+    complete: { title: "Мені аяқта", hint: "Реакцияның басы берілген. Теңдеудің жалғасын (өнімдерін) өзің жаз." }
   };
 
   const ERRORS = {
@@ -132,6 +141,54 @@
     }
   }
 
+  // Оқушы кириллица әріптерімен жазса (Н, С, О...), латынға ауыстырып көрсету
+  const LAT = { "А": "A", "В": "B", "С": "C", "Е": "E", "Н": "H", "К": "K", "М": "M", "О": "O", "Р": "P", "Т": "T", "Х": "X",
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y" };
+  const latinize = t => String(t == null ? "" : t).replace(/[АВСЕНКМОРТХаеорсху]/g, ch => LAT[ch]);
+  // H2SO4 → H₂SO₄ (select ішінде HTML жұмыс істемейді, сондықтан Юникод индекстері)
+  const SUBS = "₀₁₂₃₄₅₆₇₈₉", SUPS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+  function chemUni(t) {
+    return String(t == null ? "" : t)
+      .replace(/\^\(?(\d*)([+\-−–])\)?/g, (_, d, sg) => [...d].map(x => SUPS[x]).join("") + (sg === "+" ? "⁺" : "⁻"))
+      .replace(/([A-Za-z)\]])(\d+)/g, (_, a, d) => a + [...d].map(x => SUBS[x]).join(""));
+  }
+  // Реакция бөліктерін (коэффициент + формула) бөлу
+  function splitEq(text) {
+    const m = String(text || "").split(/\s*(?:→|->|=|⇄|⟶)\s*/);
+    return m.length >= 2 ? [m[0], m.slice(1).join(" ")] : [m[0], ""];
+  }
+  function splitTerms(side) {
+    return String(side || "").split(/\s\+\s|\s*\+\s*(?=[\dA-Z(\[])/).map(x => x.replace(/[↑↓]/g, "").trim()).filter(Boolean)
+      .map(x => { const m = x.match(/^(\d*)\s*(.+)$/); return { coef: m[1], f: m[2] }; });
+  }
+  // Атомдарды санау (теңестіруді тексеру үшін): Ca(OH)2, CuSO4·5H2O
+  function countAtoms(formula, mult) {
+    const res = {};
+    const add = (el, n) => { res[el] = (res[el] || 0) + n; };
+    const parts = String(formula).replace(/\^.*$/, "").split(/[·*•]/);
+    parts.forEach((p, idx) => {
+      let k = 1; const m = p.match(/^(\d+)(.*)$/); if (idx > 0 && m) { k = +m[1]; p = m[2]; }
+      const stack = [{}];
+      const re = /([A-Z][a-z]?)(\d*)|([(\[])|([)\]])(\d*)/g; let t;
+      while ((t = re.exec(p))) {
+        if (t[1]) { const top = stack[stack.length - 1]; top[t[1]] = (top[t[1]] || 0) + (t[2] ? +t[2] : 1); }
+        else if (t[3]) stack.push({});
+        else if (t[4]) { const g = stack.pop(), n = t[5] ? +t[5] : 1, top = stack[stack.length - 1]; for (const e in g) top[e] = (top[e] || 0) + g[e] * n; }
+      }
+      for (const e in stack[0]) add(e, stack[0][e] * k);
+    });
+    for (const e in res) res[e] *= (mult || 1);
+    return res;
+  }
+  function isBalanced(species, coefs) {
+    const tot = {};
+    species.forEach((sp, i) => {
+      const c = +(coefs[i] || 1), a = countAtoms(sp.f, c), sign = sp.side === "L" ? 1 : -1;
+      for (const e in a) tot[e] = (tot[e] || 0) + sign * a[e];
+    });
+    return Object.values(tot).every(v => v === 0);
+  }
+
   const fmtDate = d => {
     if (!d) return "";
     const x = new Date(d);
@@ -143,7 +200,8 @@
 
   // Нәтижені көрсету (оқушыға да, мұғалімге де ортақ)
   // data: {questions, contexts, answers, details}
-  function renderReview(data) {
+  function renderReview(data, opts) {
+    opts = opts || {};
     const frag = document.createDocumentFragment();
     const det = {};
     (data.details || []).forEach(d => { det[d.id] = d; });
@@ -167,7 +225,41 @@
             `${num(d.earned)} / ${num(d.points)} ұпай`)),
         rich(q.stem, "q-stem"));
 
-      if (q.type === "matching") {
+      if (q.type === "whoami") {
+        const correct = q.answer || {}, g = given || {};
+        const byK = {}; (q.options || []).forEach(o => { byK[o.k] = o.h; });
+        const list = h("div", { class: "match-left" });
+        for (const L of q.left || []) {
+          const mine = g[L.k], ok = mine === correct[L.k];
+          list.appendChild(h("div", { class: "match-row" },
+            h("div", {}, rich(L.h)),
+            h("div", { class: "small", style: { textAlign: "right" } },
+              h("span", { class: ok ? "mt-ok" : "mt-bad", html: mine ? chemifyText(byK[mine] || "?") : "—" }),
+              ok ? null : h("span", { class: "mt-ok", html: " &nbsp;дұрысы: " + chemifyText(byK[correct[L.k]] || "?") }))));
+        }
+        card.appendChild(list);
+      } else if (q.type === "balance") {
+        const ans = q.answer || [], g = Array.isArray(given) ? given : [];
+        const ok = Number(d.earned) >= Number(d.points);
+        const eq = coefs => (q.species || []).map((sp, i) => {
+          const c = String(coefs[i] == null ? "" : coefs[i]).trim();
+          const prev = i > 0 ? (q.species[i - 1].side !== sp.side ? " → " : " + ") : "";
+          return prev + (c && c !== "1" ? c : "") + chemifyText(sp.f);
+        }).join("");
+        card.appendChild(h("div", { class: "eq-line " + (ok ? "mt-ok" : "mt-bad"), html: (g.length ? eq(g) : "Жауап берілмеген") }));
+        if (!ok) card.appendChild(h("div", { class: "eq-line mt-ok small", html: "Дұрысы: " + eq(ans) }));
+      } else if (q.type === "complete") {
+        const ok = Number(d.earned) >= Number(d.points);
+        const acc = Array.isArray(q.answer) ? q.answer : [];
+        card.appendChild(h("div", { class: "eq-line" },
+          h("span", { html: chemifyText(q.start || "") + " " }),
+          h("span", { class: ok ? "mt-ok" : "mt-bad", html: given ? chemifyText(latinize(given)) : "жауап жоқ" })));
+        if (!ok && acc.length) card.appendChild(h("div", { class: "eq-line mt-ok small", html: "Дұрысы: " + acc.map(chemifyText).join(" немесе ") }));
+        if (opts.onOverride) {
+          card.appendChild(h("button", { class: "sm", style: { marginTop: ".5rem" }, onclick: () => opts.onOverride(q, d) },
+            ok ? "Қате деп белгілеу" : "Дұрыс деп белгілеу"));
+        }
+      } else if (q.type === "matching") {
         const correct = q.answer || {};
         const g = given || {};
         const list = h("div", { class: "match-left" });
@@ -232,7 +324,8 @@
 
   window.App = {
     CFG, sb, configured, TYPE_LABEL, errMsg, esc, clean, h, rich, toast, modal, confirmBox,
-    chemifyNode, chemifyText, fmtDate, num, pct, renderReview, symbolOf, childrenMap, tintMap,
+    chemifyNode, chemifyText, chemUni, latinize, splitEq, splitTerms, countAtoms, isBalanced, TASK_TYPES,
+    fmtDate, num, pct, renderReview, symbolOf, childrenMap, tintMap,
     LETTERS: "ABCDEFGH".split("")
   };
 })();
