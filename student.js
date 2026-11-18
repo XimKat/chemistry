@@ -441,8 +441,59 @@
     }
     setView(h("div", { class: "reading" }, top, head,
       h("h2", {}, "Әр сұрақ бойынша"),
-      renderReview(res),
+      h("p", { class: "small muted", style: { margin: "-.4rem 0 1rem" } },
+        "Сұрақта немесе жауапта қате бар деп ойласаңыз, сол сұрақтың астындағы «Апелляция беру» батырмасын басып, себебін жазыңыз."),
+      renderReview(res, { footer: q => appealBox(res, q) }),
       h("div", { class: "row", style: { marginTop: "1.4rem" } }, back(), again())));
+  }
+
+  // Сұрақтың астындағы апелляция бөлігі
+  function appealBox(res, q) {
+    const box = h("div", { class: "appeal" });
+    const appeals = res.appeals || (res.appeals = {});
+    const status = ap => {
+      box.innerHTML = "";
+      box.className = "appeal " + (ap.status === "open" ? "open" : "done");
+      box.append(
+        h("div", { class: "appeal-head" }, ap.status === "open"
+          ? "Апелляция берілді. Мұғалім қарағанша бұл сұрақ басқа оқушыларға көрсетілмейді."
+          : "Апелляция қаралды: мұғалім сұрақты дұрыс деп растады."),
+        h("div", { class: "small" }, h("span", { class: "muted" }, "Сіздің хабарламаңыз: "), ap.message),
+        ...(ap.reply ? [h("div", { class: "small" }, h("span", { class: "muted" }, "Мұғалімнің жауабы: "), ap.reply)] : []));
+    };
+    const ap = appeals[q.id];
+    if (ap) { status(ap); return box; }
+    if ((res.verified || []).includes(q.id)) {
+      box.className = "appeal quiet";
+      box.textContent = "Мұғалім бұл сұрақты дұрыс деп растаған.";
+      return box;
+    }
+    const open = () => {
+      const area = h("textarea", { rows: 3, maxlength: 1000, placeholder: "Неге апелляция бересіз? Мысалы: дұрыс жауап B емес, C болуы керек, себебі…" });
+      const err = h("div", { class: "small mt-bad hidden" });
+      const send = h("button", { class: "primary sm", onclick: async () => {
+        const msg = area.value.trim();
+        if (msg.length < 5) { err.textContent = "Себебін толығырақ жазыңыз."; err.classList.remove("hidden"); area.focus(); return; }
+        send.disabled = true; err.classList.add("hidden");
+        try {
+          const r = await rpc("student_appeal", { p_token: me.token, p_attempt_id: res.attempt_id, p_question_id: q.id, p_message: msg });
+          appeals[q.id] = r; status(r); toast("Апелляция жіберілді");
+        } catch (ex) {
+          if (ex.message === "NO_SESSION") return;
+          err.textContent = errMsg(ex); err.classList.remove("hidden"); send.disabled = false;
+        }
+      } }, "Жіберу");
+      box.innerHTML = ""; box.className = "appeal form";
+      box.append(h("label", { class: "field" }, "Апелляцияның себебі", area), err,
+        h("div", { class: "row" }, send, h("button", { class: "ghost sm", onclick: closed }, "Бас тарту")));
+      area.focus();
+    };
+    const closed = () => {
+      box.innerHTML = ""; box.className = "appeal";
+      box.append(h("button", { class: "ghost sm appeal-btn", onclick: open }, "Апелляция беру"));
+    };
+    closed();
+    return box;
   }
 
   async function showReview(attemptId) {

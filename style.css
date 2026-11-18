@@ -387,3 +387,20 @@ select.who-sel { width: auto; min-width: 150px; max-width: 46vw; }
 .type-card .type-meta { margin-top: auto; padding-top: .5rem; font-size: .88rem; color: var(--accent); }
 .type-card:disabled { opacity: .55; cursor: default; }
 .type-card:disabled:hover { border-color: var(--rule); background: var(--surface); }
+
+/* Апелляция */
+.appeal { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid var(--rule-soft); display: grid; gap: .45rem; }
+.appeal.quiet { font-size: .86rem; color: var(--faint); }
+.appeal.open { background: var(--warn-soft); border: 1px solid transparent; border-radius: var(--r-sm); padding: .7rem .8rem; }
+.appeal.done { background: var(--accent-soft); border: 1px solid transparent; border-radius: var(--r-sm); padding: .7rem .8rem; }
+.appeal-head { font-weight: 600; font-size: .92rem; }
+.appeal.open .appeal-head { color: var(--warn); }
+.appeal.done .appeal-head { color: var(--accent); }
+.appeal-btn { justify-self: start; }
+.appeal textarea { width: 100%; }
+.tabs .count { display: inline-block; min-width: 1.35rem; padding: 0 .35rem; margin-left: .35rem; border-radius: 999px; background: var(--bad); color: #fff; font-size: .75rem; line-height: 1.35rem; text-align: center; }
+.appeal-msgs { display: grid; gap: .6rem; margin: .8rem 0; }
+.appeal-msg { border-left: 3px solid var(--warn); padding: .2rem 0 .2rem .8rem; }
+.appeal-msg.done { border-left-color: var(--accent); }
+.appeal-group { margin-bottom: 1.6rem; }
+.appeal-group .q-card { margin-bottom: 0; }

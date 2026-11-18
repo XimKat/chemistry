@@ -57,12 +57,23 @@
   // =====================================================================
   //  ҚОЙЫНДЫЛАР
   // =====================================================================
+  let appealCount = 0;
+  let editorReturn = null;   // өңдеуден кейін қай қойындыға оралу керек
   function tabs() {
-    const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
+    const items = [["tests", "Тесттер"], ["tasks", "Тапсырмалар"], ["appeals", "Апелляциялар"], ["students", "Оқушылар"], ["results", "Нәтижелер"]];
     return h("nav", { class: "tabs no-print" }, items.map(([k, label]) =>
-      h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; if (k === "tasks") taskType = null; route(); } }, label)));
+      h("button", { class: tab === k ? "active" : "", onclick: () => { tab = k; editorReturn = null; if (k === "tasks") taskType = null; route(); } }, label,
+        k === "appeals" ? h("span", { class: "count appeal-count" + (appealCount ? "" : " hidden") }, String(appealCount)) : null)));
+  }
+  async function refreshAppealCount() {
+    try {
+      appealCount = Number(must(await sb.rpc("teacher_appeal_count"))) || 0;
+      document.querySelectorAll(".appeal-count").forEach(el => { el.textContent = String(appealCount); el.classList.toggle("hidden", !appealCount); });
+    } catch (_) {}
   }
   function route(arg) {
+    refreshAppealCount();
+    if (tab === "appeals") return showAppeals();
     if (tab === "tests") return showTests("tests");
     if (tab === "tasks") return taskType ? showTests("tasks:" + taskType) : showTaskTypes();
     if (tab === "students") return showStudents();
@@ -327,6 +338,69 @@
   }
 
   // =====================================================================
+  //  АПЕЛЛЯЦИЯЛАР
+  // =====================================================================
+  let appealFilter = "open";
+  async function showAppeals() {
+    loading();
+    let groups;
+    try { groups = must(await sb.rpc("teacher_appeals", { p_status: appealFilter })) || []; }
+    catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
+
+    const seg = h("div", { class: "seg", role: "tablist", style: { marginBottom: "1.2rem" } },
+      [["open", "Қаралмаған"], ["resolved", "Қаралған"]].map(([k, label]) =>
+        h("button", { class: appealFilter === k ? "active" : "", onclick: () => { appealFilter = k; showAppeals(); } }, label)));
+
+    async function verify(g) {
+      const reply = h("textarea", { rows: 3, maxlength: 1000, placeholder: "Мысалы: жауап дұрыс, себебі… (міндетті емес)" });
+      const ok = await modal(h("div", { class: "stack" },
+        h("h3", {}, "Сұрақ дұрыс па?"),
+        h("p", { class: "small muted", style: { margin: 0 } },
+          "Растасаңыз, сұрақ қайта белсенді болып, оқушыларға шығады. Бұл сұраққа енді апелляция берілмейді. Сұрақта қате болса, алдымен «Сұрақты өңдеу» арқылы түзетіңіз."),
+        h("label", { class: "field" }, "Оқушыларға жауап (міндетті емес)", reply)),
+        [{ label: "Бас тарту", value: false }, { label: "Сұрақ дұрыс, қайта қосу", value: true, class: "primary" }]);
+      if (!ok) return;
+      try {
+        must(await sb.rpc("teacher_verify_question", { p_test_id: g.test_id, p_question_id: g.question_id, p_reply: reply.value.trim() }));
+        toast("Сұрақ қайта белсенді"); showAppeals(); refreshAppealCount();
+      } catch (ex) { toast(errMsg(ex)); }
+    }
+
+    const groupCard = g => {
+      const first = g.items[0] || {};
+      const kindLabel = g.kind === "task" ? ((TASK_TYPES[g.task_type] || {}).title || "Тапсырма") : "Тест";
+      return h("section", { class: "appeal-group" },
+        h("div", { class: "row between", style: { alignItems: "flex-end", marginBottom: ".6rem" } },
+          h("div", {},
+            h("div", { class: "small muted" }, `${kindLabel}${g.number ? `, ${g.number}-сұрақ` : ""}`),
+            h("h2", { style: { margin: 0 } }, g.title)),
+          h("div", { class: "row" },
+            h("button", { class: "sm", onclick: () => { editorReturn = "appeals"; showEditor(g.test_id); } }, "Сұрақты өңдеу"),
+            appealFilter === "open" ? h("button", { class: "sm primary", onclick: () => verify(g) }, "Сұрақ дұрыс") : null)),
+        g.question
+          ? renderReview({ questions: [g.question], contexts: g.contexts,
+              answers: { [g.question_id]: first.answer }, details: first.detail ? [first.detail] : [] }, { firstNum: g.number || 1 })
+          : h("div", { class: "notice" }, "Бұл сұрақ тесттен өшірілген. Апелляцияны жабу үшін «Сұрақ дұрыс» батырмасын басыңыз."),
+        g.question && g.items.length > 1 ? h("p", { class: "small muted" }, `Жоғарыда ${first.student} берген жауап көрсетілген.`) : null,
+        h("div", { class: "appeal-msgs" }, g.items.map(it => {
+          const d = it.detail, res = d ? (Number(d.earned) >= Number(d.points) ? "дұрыс жауап берген" : Number(d.earned) > 0 ? "жартылай дұрыс" : "қате жауап берген") : "";
+          return h("div", { class: "appeal-msg" + (it.status === "open" ? "" : " done") },
+            h("div", { class: "small muted" }, `${it.student}${it.class_name ? ", " + it.class_name : ""}. ${fmtDate(it.created_at)}${res ? ". " + res[0].toUpperCase() + res.slice(1) : ""}`),
+            h("div", {}, it.message),
+            it.reply ? h("div", { class: "small" }, h("span", { class: "muted" }, "Сіздің жауабыңыз: "), it.reply) : null);
+        })));
+    };
+
+    setView(tabs(),
+      h("h1", {}, "Апелляциялар"),
+      h("p", { class: "muted", style: { margin: "0 0 1rem" } },
+        "Оқушылар апелляция берген сұрақтар. Сіз «Сұрақ дұрыс» деп растағанша олар оқушыларға көрсетілмейді және бағаланбайды."),
+      seg,
+      groups.length ? groups.map(groupCard)
+        : h("div", { class: "card empty" }, appealFilter === "open" ? "Қаралмаған апелляция жоқ." : "Соңғы 60 күнде қаралған апелляция жоқ."));
+  }
+
+  // =====================================================================
   //  ТАПСЫРМАЛАР: «Мен кіммін?», «Теңестір», «Мені аяқта»
   // =====================================================================
   const TASK_FORMAT = {
@@ -494,8 +568,10 @@
     }
     const back = h("button", { class: "ghost sm", onclick: async () => {
       if (dirty && !(await confirmBox("Сақталмаған өзгерістер бар. Шыға берейін бе?", "Шығу", true))) return;
-      dirty = false; tab = "tasks"; taskType = type; route();
-    } }, `«${(TASK_TYPES[type] || {}).title || "Тапсырма"}» тізіміне оралу`);
+      dirty = false; tab = "tasks"; taskType = type;
+      if (editorReturn) { tab = editorReturn; editorReturn = null; }
+      route();
+    } }, editorReturn === "appeals" ? "Апелляцияларға оралу" : `«${(TASK_TYPES[type] || {}).title || "Тапсырма"}» тізіміне оралу`);
 
     setView(
       h("div", { class: "editor-sticky no-print" }, h("div", { class: "row between" }, h("div", { class: "row" }, back, summary), saveBtn)),
@@ -910,8 +986,10 @@
 
     const back = h("button", { class: "ghost sm", onclick: async () => {
       if (dirty && !(await confirmBox("Сақталмаған өзгерістер бар. Шыға берейін бе?", "Шығу", true))) return;
-      dirty = false; tab = "tests"; route();
-    } }, "Тесттерге оралу");
+      dirty = false; tab = "tests";
+      if (editorReturn) { tab = editorReturn; editorReturn = null; }
+      route();
+    } }, editorReturn === "appeals" ? "Апелляцияларға оралу" : "Тесттерге оралу");
 
     setView(
       h("div", { class: "editor-sticky no-print" },

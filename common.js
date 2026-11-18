@@ -36,6 +36,11 @@
     NO_TEST: "Тест табылмады немесе әлі жарияланбаған.",
     NO_ATTEMPT: "Бұл тест бойынша нәтиже жоқ.",
     BAD_ANSWERS: "Жауаптар дұрыс жіберілмеді.",
+    APPEAL_VERIFIED: "Мұғалім бұл сұрақты дұрыс деп растаған, оған апелляция берілмейді.",
+    APPEAL_EXISTS: "Бұл сұраққа апелляцияны бұрын бергенсіз.",
+    APPEAL_SHORT: "Апелляцияның себебін толығырақ жазыңыз.",
+    APPEAL_LIMIT: "Бүгін апелляция тым көп берілді. Ертең қайталап көріңіз.",
+    NO_QUESTION: "Сұрақ табылмады: мұғалім оны өзгерткен болуы мүмкін.",
     "Invalid login credentials": "Пошта немесе құпиясөз қате.",
     "Failed to fetch": "Интернет байланысын тексеріңіз."
   };
@@ -206,9 +211,10 @@
     const det = {};
     (data.details || []).forEach(d => { det[d.id] = d; });
     const answers = data.answers || {};
-    let lastCtx = null, n = 0;
+    let lastCtx = null, n = (opts.firstNum || 1) - 1;
     for (const q of data.questions || []) {
       n++;
+      if (opts.only && q.id !== opts.only) continue;
       if (q.context && q.context !== lastCtx && data.contexts && data.contexts[q.context]) {
         frag.appendChild(h("div", { class: "card ctx-card" },
           h("div", { class: "ctx-label" }, "Контекст"), rich(data.contexts[q.context])));
@@ -293,6 +299,7 @@
         if (!givenSet.size) card.appendChild(h("p", { class: "small mt-bad" }, "Жауап берілмеген"));
         card.appendChild(opts);
       }
+      if (opts.footer) { const f = opts.footer(q, d); if (f) card.appendChild(f); }
       frag.appendChild(card);
     }
     return frag;
