@@ -766,7 +766,7 @@
         attemptsCount = count || 0;
       } else {
         doc = { id: null, title: "", description: "", published: false, show_answers: true, folder_id: folderId || null,
-          max_attempts: 1, classes: [], kind: taskType ? "task" : "test",
+          max_attempts: 0, classes: [], kind: taskType ? "task" : "test",
           content: taskType ? { task_type: taskType, source: "", questions: [], contexts: {} } : { questions: [], contexts: {} } };
       }
     } catch (ex) { return setView(tabs(), h("div", { class: "notice err" }, errMsg(ex))); }
